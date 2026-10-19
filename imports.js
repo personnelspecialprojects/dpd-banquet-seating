@@ -538,7 +538,7 @@ IM.parsePaste = function (text) {
 
 IM.pasteDialog = function () {
   const body = '<p>Copy rows from Excel (or type one per line) and paste them below. Columns in this order work best:</p>' +
-    '<p class="muted small"><b>Name</b> · <b>Seats</b> · Table (optional) · Unit/org (optional). A header row with words like “Name”, “Seats”, “Table”, “Unit”, “Payment” is also understood. Lines like “Laura Dodd - 4” work too.</p>' +
+    '<p class="muted small"><b>Name</b> · <b>Seats</b> · Table (optional) · Unit/org (optional). A header row with words like “Name”, “Seats”, “Table”, “Unit”, “VIP” is also understood. Lines like “Laura Dodd - 4” work too.</p>' +
     '<textarea id="ppText" rows="8" class="block" placeholder="Laura Dodd\t4\nRobbery Unit\t12\t55"></textarea>' +
     '<div id="ppPrev"></div>';
   let rows = [];
@@ -639,18 +639,19 @@ BQ.sample = {
     const person = () => { let n; do { n = pick(F) + ' ' + pick(L); } while (used.has(n)); used.add(n); return n; };
     const parties = [];
     const add = o => { const p = Object.assign({ type: 'Guest', aff: '', seats: 1, table: '', guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: '', checkedIn: 0, pinned: false, group: '' }, o); parties.push(p); return p; };
-    add({ name: BQ.config.demo ? 'Host Foundation' : 'Friends of the Dallas Police', type: 'Host', seats: 7, table: '8', pinned: true, pay: 'Comp (no charge)', notes: 'Host organization seats' });
-    add({ name: 'Event Volunteers', type: 'Volunteers', seats: 10, table: '66', pay: 'Comp (no charge)' });
-    add({ name: 'Bagpipe & Drum Corps', type: 'Performers', seats: 10, pay: 'Comp (no charge)' });
-    add({ name: 'DPD Choir', type: 'Performers', seats: 2, pay: 'Comp (no charge)' });
-    add({ name: 'Chief’s Command Staff', type: 'VIP', seats: 10, pay: 'Comp (no charge)', needs: [{ type: 'front', target: '' }], vip: true, vipCount: 10 });
-    units.forEach(u => add({ name: u, type: 'Unit', aff: u, seats: 4 + Math.floor(r() * 9), pay: pick(['Paid', 'Paid', 'Pending', 'Invoice sent']) }));
+    add({ name: BQ.config.demo ? 'Host Foundation' : 'Friends of the Dallas Police', type: 'Host', seats: 7, table: '8', pinned: true, pay: BQ.config.trackPayment ? 'Comp (no charge)' : '', notes: 'Host organization seats' });
+    add({ name: 'Event Volunteers', type: 'Volunteers', seats: 10, table: '66', pay: BQ.config.trackPayment ? 'Comp (no charge)' : '' });
+    add({ name: 'Bagpipe & Drum Corps', type: 'Performers', seats: 10, pay: BQ.config.trackPayment ? 'Comp (no charge)' : '' });
+    add({ name: 'DPD Choir', type: 'Performers', seats: 2, pay: BQ.config.trackPayment ? 'Comp (no charge)' : '' });
+    add({ name: 'Chief’s Command Staff', type: 'VIP', seats: 10, pay: BQ.config.trackPayment ? 'Comp (no charge)' : '', needs: [{ type: 'front', target: '' }], vip: true, vipCount: 10 });
+    units.forEach(u => add({ name: u, type: 'Unit', aff: u, seats: 4 + Math.floor(r() * 9), pay: BQ.config.trackPayment ? pick(['Paid', 'Paid', 'Pending', 'Invoice sent']) : '' }));
     for (let i = 0; i < 62; i++) {
       const n = person();
       const seats = pick([1, 2, 2, 2, 2, 3, 4, 4, 4, 6]);
       const aff = r() < 0.45 ? pick(units) : '';
       const guests = r() < 0.4 ? Array.from({ length: Math.min(seats - 1, 2) }, () => person()) : [];
-      add({ name: n, seats, aff, guests, pay: pick(['Paid', 'Paid', 'Paid', 'Pending', 'Not paid', '']) });
+      const pay = pick(['Paid', 'Paid', 'Paid', 'Pending', 'Not paid', '']);
+      add({ name: n, seats, aff, guests, pay: BQ.config.trackPayment ? pay : '' });
     }
     // a few special requests
     const G = parties.filter(p => p.type === 'Guest');

@@ -463,13 +463,14 @@ X.backupXlsx = async function () {
   if (!X.needExcel()) return;
   const wb = X.newBook();
   const g = wb.addWorksheet('Guests', { views: [{ state: 'frozen', ySplit: 1 }] });
-  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests', 'Payment', 'Payment Note', 'Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception'];
-  g.columns = cols.map((c, i) => ({ width: [28, 14, 22, 7, 7, 40, 40, 14, 22, 14, 26, 30, 10, 8, 12, 12][i] }));
+  const PAY = BQ.config.trackPayment;
+  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception']);
+  g.columns = cols.map(c => ({ width: { Name: 28, 'Guest Names': 40, Requests: 40, Notes: 30, Email: 26, 'Payment Note': 22, 'Unit / Org': 22 }[c] || 12 }));
   X.header(g, 1, cols, { size: 11 });
   BQ.state.parties.slice().sort((a, b) => BQ.numSort(a.table || 'zz', b.table || 'zz') || a.name.localeCompare(b.name)).forEach((p, i) => {
-    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p), p.pay, p.payNote, p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : ''];
+    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '']);
   });
-  g.autoFilter = { from: 'A1', to: 'P1' };
+  g.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   const t = wb.addWorksheet('Tables');
   t.columns = [{ width: 8 }, { width: 8 }, { width: 10 }, { width: 8 }, { width: 8 }, { width: 12 }, { width: 28 }, { width: 18 }];
   X.header(t, 1, ['Table', 'Chairs', 'Shape', 'X', 'Y', 'Status', 'Reserved / note', 'Area'], { size: 11 });
@@ -603,6 +604,16 @@ X.printTents = async function () {
   X.print(ts.map(t => '<div class="tent"><div class="flip">' + half(t) + '</div><div class="fold"></div>' + half(t) + '</div>').join(''), 'landscape', 'table tents');
 };
 
+/* A sign for the check-in table: big QR code that opens phone check-in */
+X.printQrSign = function () {
+  const qr = BQ.checkinQrSvg();
+  if (!qr) { BQ.ui.toast('The QR code tool didn’t load (check the internet connection).', 'bad'); return; }
+  X.print('<div class="qrsign"><div class="qs-ev">' + BQ.esc(BQ.state.event.title) + '</div><h1>Staff check-in</h1>' +
+    '<div class="qs-code">' + qr + '</div>' +
+    '<ol><li>Open the phone’s camera and point it at the code.</li><li>Tap the link and sign in with your City account.</li><li>Search a name and tap <b>✓ Here</b>. Switch to <b>⭐ VIP reception</b> at the top for the reception door.</li></ol>' +
+    '<div class="qs-url">' + BQ.esc(BQ.checkinUrl()) + '</div></div>', 'portrait', 'QR sign');
+};
+
 X.printEscort = function () {
   const rows = X.alphaRows().filter(x => x.table && !x.block);
   if (!rows.length) { BQ.ui.toast('Nobody is seated yet.'); return; }
@@ -640,6 +651,7 @@ BQ.screens.exports = {
       tile('pvip', '⭐', 'VIP reception list', 'Printed list with check boxes for the reception door.') +
       tile('tents', '🪧', 'Table number tents', 'One per page. Fold in half.') +
       tile('escort', '🎫', 'Escort cards', 'Name + table cards, 10 per page, A–Z.') +
+      tile('qrsign', '📱', 'Phone check-in QR sign', 'A page with the QR code staff scan to check people in from their phones.') +
       '</div>' +
       '<h2 class="sec">Bring data in</h2><div class="tiles">' +
       tile('impClassic', '📥', 'From your old spreadsheet', 'Read a “Table seating” workbook (like last year’s) and add those guests and tables.') +
@@ -651,7 +663,7 @@ BQ.screens.exports = {
       '<p class="muted small">Tip: in the print window, choose your printer or <b>Save as PDF</b>.</p></div>';
     const go = {
       classic: X.classicXlsx, alpha: X.alphaXlsx, rosters: X.rostersXlsx, checkin: X.checkinXlsx, payment: X.paymentXlsx, lineup: X.lineupXlsx, backup: X.backupXlsx,
-      awardfile: X.awardFileXlsx, vip: X.vipXlsx, pvip: X.printVip, impAwards: () => BQ.imports.awardsDialog(), impHonors: () => BQ.imports.honorsDialog(),
+      awardfile: X.awardFileXlsx, qrsign: X.printQrSign, vip: X.vipXlsx, pvip: X.printVip, impAwards: () => BQ.imports.awardsDialog(), impHonors: () => BQ.imports.honorsDialog(),
       pmap: X.printMap, png: X.mapPng, palpha: X.printAlpha, prost: X.printRosters, pcheck: X.printCheckin, pline: X.printLineup, tents: X.printTents, escort: X.printEscort,
       impClassic: () => BQ.imports.classicDialog(), impPaste: () => BQ.imports.pasteDialog(), impBackup: () => BQ.imports.restoreDialog()
     };

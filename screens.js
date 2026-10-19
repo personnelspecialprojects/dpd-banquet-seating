@@ -692,13 +692,17 @@ BQ.checkinUrl = function () {
   const base = BQ.state.store.kind === 'practice' ? location.href.split('?')[0].split('#')[0] : BQ.config.redirectUri;
   return base + '?mode=checkin' + (BQ.state.store.kind === 'practice' ? '#practice' : '');
 };
+BQ.checkinQrSvg = function () {
+  try {
+    if (typeof qrcode === 'undefined') return '';
+    const q = qrcode(0, 'M'); q.addData(BQ.checkinUrl()); q.make();
+    return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+  } catch (e) { return ''; }
+};
 BQ.phoneDialog = function () {
   if (BQ.config.demo) { BQ.ui.toast('In the real app this shows a QR code that opens check-in on a phone.'); return; }
   const url = BQ.checkinUrl();
-  let qr = '';
-  try {
-    if (typeof qrcode !== 'undefined') { const q = qrcode(0, 'M'); q.addData(url); q.make(); qr = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); }
-  } catch (e) { qr = ''; }
+  const qr = BQ.checkinQrSvg();
   BQ.ui.modal({
     title: 'Check people in from a phone',
     body: '<div class="phone-qr">' + (qr || '<p class="muted">QR code unavailable. Use the link below.</p>') + '</div>' +
@@ -706,7 +710,7 @@ BQ.phoneDialog = function () {
       '<p class="small"><a href="' + BQ.esc(url) + '" target="_blank" rel="noopener">' + BQ.esc(url) + '</a></p>' +
       (BQ.state.store.kind === 'practice' ? '<p class="warn small">In practice mode, each phone has its own separate practice data.</p>' : '') +
       '<p class="muted small">This is a first version. Keep the printed check-in sheet handy as a backup.</p>',
-    buttons: [{ label: 'Close', cls: 'primary' }]
+    buttons: [{ label: '🖨 Print a QR sign', onClick: () => { setTimeout(() => BQ.exports.printQrSign()); } }, { label: 'Close', cls: 'primary' }]
   });
 };
 
@@ -736,6 +740,8 @@ BQ.screens.settings = {
       '<div class="field"><label>Sort people in A–Z lists by</label><div class="seg" id="stSort"><button data-v="last" class="' + (s.sortBy !== 'first' ? 'on' : '') + '">Last name</button><button data-v="first" class="' + (s.sortBy === 'first' ? 'on' : '') + '">First name</button></div></div>' +
       '</div>' +
       '<div class="card"><h2>Look &amp; feel</h2><p class="muted small">Pick a color tone, a background (or your own photo), and text size. Saved on this computer.</p><button class="btn primary" id="stLook">🎨 Change the look…</button></div>' +
+      '<div class="card"><h2>Phone check-in</h2><p class="muted small">Staff scan a QR code with their phone camera, sign in with their City account, and get a phone-sized check-in screen (banquet and VIP reception).</p>' +
+      '<div class="row gap"><button class="btn" id="stQr">📱 Show the QR code</button><button class="btn" id="stQrPrint">🖨 Print a QR sign</button></div></div>' +
       '<div class="card"><h2>Events</h2><p class="muted small">Each year is its own event with its own room, guests and awards. Switch events from the menu at the top.</p>' +
       '<button class="btn" id="stNew">＋ New event…</button></div>' +
       (practice ? '<div class="card"><h2>Practice data</h2><p class="muted small">Practice mode keeps everything in this browser only.</p>' +
@@ -751,6 +757,8 @@ BQ.screens.settings = {
     main.querySelectorAll('#stSort button').forEach(b => b.onclick = () => ev('Sort by ' + b.dataset.v + ' name', a => { a.settings = Object.assign({}, BQ.DEFAULT_SETTINGS, a.settings, { sortBy: b.dataset.v }); }));
     main.querySelector('#stNew').onclick = () => BQ.newEventDialog();
     main.querySelector('#stLook').onclick = () => BQ.look.dialog();
+    main.querySelector('#stQr').onclick = () => BQ.phoneDialog();
+    main.querySelector('#stQrPrint').onclick = () => BQ.exports.printQrSign();
     main.querySelector('#stLog').onclick = async () => {
       const box = main.querySelector('#stLogBox');
       box.innerHTML = '<p class="muted">Loading…</p>';

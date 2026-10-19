@@ -551,6 +551,12 @@ body.kiosk .topbar .user { display: none; }
   .tent-ev { font-size: 14pt; color: #444; letter-spacing: .1em; text-transform: uppercase; }
   .tent-n { font-size: 200pt; font-weight: 800; line-height: 1; color: #14213D; }
   .tent-res { font-size: 22pt; font-weight: 600; }
+  .qrsign { text-align: center; padding-top: .3in; }
+  .qs-ev { font-size: 14pt; color: #555; letter-spacing: .08em; text-transform: uppercase; }
+  .qrsign h1 { font-size: 40pt; margin: 6px 0 18px; color: #14213D; }
+  .qs-code svg { width: 4.2in; height: 4.2in; }
+  .qrsign ol { text-align: left; display: inline-block; font-size: 15pt; margin-top: 18px; }
+  .qs-url { font-size: 9pt; color: #666; margin-top: 14px; word-break: break-all; }
   .escort { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
   .ec { height: 2in; border: 1px dashed #bbb; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; break-inside: avoid; padding: 6px; }
   .ec-ev { font-size: 8pt; color: #666; text-transform: uppercase; letter-spacing: .08em; }
