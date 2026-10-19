@@ -17,6 +17,9 @@ BQ.config = {
   siteUrl: 'https://dallastxgov.sharepoint.com/sites/AwardsBanquet',
   // Practice mode lets someone try the app with data saved only in their own browser.
   allowPractice: true,
+  // Payments are handled by a third-party org, so payment tracking is off.
+  // Set to true (and add PaymentStatus + PaymentNote columns) to turn it back on.
+  trackPayment: false,
   demo: false          // true only in the hosted preview build
 };
 

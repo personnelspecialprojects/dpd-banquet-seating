@@ -129,7 +129,7 @@ BQ.stats = function () {
     if (st === 'full') full++;
   });
   const arrived = ps.reduce((s, p) => s + Math.min(Number(p.checkedIn) || 0, Number(p.seats) || 0), 0);
-  const unpaid = ps.filter(p => BQ.payClass(p.pay) === 'bad' || BQ.payClass(p.pay) === 'warn').length;
+  const unpaid = BQ.config.trackPayment ? ps.filter(p => BQ.payClass(p.pay) === 'bad' || BQ.payClass(p.pay) === 'warn').length : 0;
   const vipInvited = ps.reduce((s, p) => s + BQ.vipCount(p), 0);
   const vipArrived = ps.reduce((s, p) => s + Math.min(Number(p.vipIn) || 0, BQ.vipCount(p)), 0);
   return { parties: ps.length, requested, seated, waiting: requested - seated, waitingParties: BQ.unseated().length,
@@ -661,14 +661,21 @@ BQ.rankShort = function (rank) {
 BQ.recipLabel = function (r, o) {
   o = o || {};
   const rk = BQ.rankShort(r.rank);
-  return (rk && !o.noRank ? rk + ' ' : '') + (r.name || '') + (r.badge && !o.noBadge ? ' #' + r.badge : '');
+  return (rk && !o.noRank ? rk + ' ' : '') + (r.name || '') + (r.badge && !o.noBadge ? ' #' + r.badge : '') + (r.unit && !o.noUnit ? ' · ' + r.unit : '');
 };
 // "John_Smith_1234" → {name: "John Smith", badge: "1234"};  "Mary_Ann_Lee" → {name: "Mary Ann Lee"}
+// Also accepts a rank on the end ("John_Smith_SGT", "John_Smith_1234_Sr Cpl") and returns it as rankTag.
+BQ.RANK_TOKEN = /^(p\.?\s?o\.?|police officer|officer|ofc\.?|sr\.?\s*cpl\.?|senior\.?\s*corporal|sr\.?\s*corporal|cpl\.?|corporal|sgt\.?|serge?a?nt|lt\.?|lieutenant|capt?\.?|captain|maj\.?|major|det\.?|detective|d\.?c\.?|deputy chief|a\.?c\.?|asst\.?\s*chief|assistant chief|chief|prof(essional)?\s*staff|civ(ilian)?)$/i;
 BQ.parseAwardName = function (raw) {
   const s = String(raw || '').trim();
-  if (!s) return { name: '', badge: '' };
+  if (!s) return { name: '', badge: '', rankTag: '' };
   const parts = s.split(/_+/).map(x => x.trim()).filter(Boolean);
-  let badge = '';
-  if (parts.length > 1 && /^\d{2,7}$/.test(parts[parts.length - 1])) badge = parts.pop();
-  return { name: parts.join(' ').replace(/\s+/g, ' '), badge };
+  let badge = '', rankTag = '';
+  for (let k = 0; k < 2 && parts.length > 1; k++) {
+    const last = parts[parts.length - 1];
+    if (!badge && /^#?\d{2,7}$/.test(last)) badge = parts.pop().replace('#', '');
+    else if (!rankTag && parts.length > 2 && BQ.RANK_TOKEN.test(last)) rankTag = parts.pop();
+    else break;
+  }
+  return { name: parts.join(' ').replace(/\s+/g, ' '), badge, rankTag };
 };

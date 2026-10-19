@@ -235,7 +235,7 @@ BQ.ui.openParty = function (p, defaults) {
     '<div class="field"><label>Guest names <span class="muted">(optional, one per line)</span> <span id="pfNamed" class="muted"></span></label><textarea id="pfGuests" rows="3" placeholder="Leave blank if you only know the count">' + BQ.esc((d.guests || []).join('\n')) + '</textarea></div>' +
     '<div class="field"><label>Special requests</label><div id="pfNeeds"></div>' +
     '<div class="needadd">' + Object.keys(BQ.NEEDS).map(k => '<button data-k="' + k + '" title="' + BQ.esc(BQ.NEEDS[k].hint || '') + '">' + BQ.NEEDS[k].icon + ' ' + BQ.esc(BQ.NEEDS[k].label) + '</button>').join('') + '</div></div>' +
-    '<div class="field two"><div><label>Payment</label><select id="pfPay"><option value="">Not set</option>' + BQ.PAY.map(v => '<option' + (d.pay === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></div>' +
+    '<div class="field two"' + (BQ.config.trackPayment ? '' : ' hidden') + '><div><label>Payment</label><select id="pfPay"><option value="">Not set</option>' + BQ.PAY.map(v => '<option' + (d.pay === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></div>' +
     '<div><label>Payment note</label><input id="pfPayNote" value="' + BQ.esc(d.payNote) + '" placeholder="e.g. check #1042, $50/seat"/></div></div>' +
     '<div class="field two"><div><label>Phone</label><input id="pfPhone" value="' + BQ.esc(d.phone) + '"/></div><div><label>Email</label><input id="pfEmail" value="' + BQ.esc(d.email) + '"/></div></div>' +
     '<div class="field"><label>Notes</label><textarea id="pfNotes" rows="2">' + BQ.esc(d.notes) + '</textarea></div>' +
@@ -372,7 +372,7 @@ BQ.screens.home = {
     bad.slice(0, 6).forEach(i => att.push(['requests', '⚠️', i.kind === 'need' ? i.party.name + ': ' + BQ.needText(i.need) + ' (' + i.msg + ')' : i.msg]));
     if (bad.length > 6) att.push(['requests', '⚠️', (bad.length - 6) + ' more request problems']);
     if (info.length) att.push(['requests', '📝', BQ.plural(info.length, 'reminder') + ' to check off']);
-    if (s.unpaid) att.push(['guests', '💲', BQ.plural(s.unpaid, 'party').replace('partys', 'parties') + ' not marked paid']);
+    if (BQ.config.trackPayment && s.unpaid) att.push(['guests', '💲', BQ.plural(s.unpaid, 'party').replace('partys', 'parties') + ' not marked paid']);
     if (unlinked) att.push(['awards', '🏆', BQ.plural(unlinked, 'award recipient') + ' not found on the guest list']);
     main.innerHTML =
       '<div class="page">' +
@@ -407,7 +407,8 @@ BQ.screens.guests = {
   title: 'Guest List',
   render(main) {
     const V = BQ.guestView;
-    const filters = [['all', 'Everyone'], ['waiting', 'Waiting for a seat'], ['seated', 'Seated'], ['needs', 'Has requests'], ['problems', 'Request not met'], ['unpaid', 'Not paid'], ['orgs', 'Units & orgs'], ['vip', '⭐ VIP reception']];
+    const filters = [['all', 'Everyone'], ['waiting', 'Waiting for a seat'], ['seated', 'Seated'], ['needs', 'Has requests'], ['problems', 'Request not met'], ['unpaid', 'Not paid'], ['orgs', 'Units & orgs'], ['vip', '⭐ VIP reception']]
+      .filter(f => f[0] !== 'unpaid' || BQ.config.trackPayment);
     main.innerHTML = '<div class="page wide">' +
       '<div class="page-head"><h1>Guest List</h1><span class="grow"></span>' +
       '<button class="btn" id="glPaste">📋 Paste a list…</button><button class="btn primary" id="glAdd">＋ Add guest or group</button></div>' +
@@ -447,7 +448,7 @@ BQ.screens.guests = {
     const th = (k, l, c) => '<th data-k="' + k + '" class="' + (c || '') + (V.sort === k ? ' sorted' : '') + '">' + l + (V.sort === k ? (V.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
     box.innerHTML = '<div class="muted small">' + rows.length + ' of ' + BQ.state.parties.length + ' parties · ' + seats + ' seats</div>' +
       '<div class="tablewrap"><table class="grid hover"><thead><tr>' + th('name', 'Name') + th('type', 'Type') + th('aff', 'Unit / org') + th('seats', 'Seats', 'c') + th('table', 'Table', 'c') +
-      '<th>Requests</th>' + th('pay', 'Payment') + th('checkin', 'Here', 'c') + '</tr></thead><tbody>' +
+      '<th>Requests</th>' + (BQ.config.trackPayment ? th('pay', 'Payment') : '') + th('checkin', 'Here', 'c') + '</tr></thead><tbody>' +
       rows.map(p => {
         const ti = BQ.typeInfo(p.type);
         const needs = (p.needs || []).map(n => { const r = BQ.checkNeed(p, n); return '<span class="need n-' + r.state + '" title="' + BQ.esc(BQ.needText(n) + ' — ' + r.msg) + '">' + (BQ.NEEDS[n.type] || {}).icon + '</span>'; }).join('');
@@ -455,7 +456,7 @@ BQ.screens.guests = {
           ((p.guests || []).length ? '<div class="muted small">' + BQ.esc(p.guests.join(', ')) + '</div>' : '') + '</td>' +
           '<td>' + ti.icon + ' ' + BQ.esc(ti.label) + '</td><td>' + BQ.esc(p.aff) + '</td><td class="c">' + p.seats + '</td>' +
           '<td class="c">' + (p.table ? '<b>' + BQ.esc(p.table) + '</b>' : '<button class="btn sm" data-find="' + p.id + '">Find a seat</button>') + '</td>' +
-          '<td>' + needs + '</td><td>' + (p.pay ? '<span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '<span class="muted">—</span>') + '</td>' +
+          '<td>' + needs + '</td>' + (!BQ.config.trackPayment ? '' : '<td>' + (p.pay ? '<span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '<span class="muted">—</span>') + '</td>') +
           '<td class="c">' + (p.checkedIn ? Math.min(p.checkedIn, p.seats) + '/' + p.seats : '') + '</td></tr>';
       }).join('') + '</tbody></table></div>' + (rows.length ? '' : '<p class="muted pad">No guests match.</p>');
     box.querySelectorAll('th[data-k]').forEach(h => h.onclick = () => { if (V.sort === h.dataset.k) V.dir *= -1; else { V.sort = h.dataset.k; V.dir = 1; } this.drawTable(); });
@@ -650,7 +651,7 @@ BQ.screens.checkin = {
       const vipNote = !vipMode && p.vip ? ' · <span class="vipchip">⭐ VIP</span>' : '';
       return '<div class="ci' + (done ? ' done' : '') + '"><div class="ci-who"><b>' + BQ.esc(x.name) + '</b>' +
         '<div class="muted small">' + (x.leader ? (BQ.isOrg(p) ? BQ.esc(BQ.typeInfo(p.type).label) : 'Party of ' + p.seats) : 'with ' + BQ.esc(p.name)) + (p.aff ? ' · ' + BQ.esc(p.aff) : '') + vipNote +
-        (p.pay && BQ.payClass(p.pay) !== 'ok' ? ' · <span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '') + '</div></div>' +
+        (BQ.config.trackPayment && p.pay && BQ.payClass(p.pay) !== 'ok' ? ' · <span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '') + '</div></div>' +
         '<div class="ci-table">' + (vipMode ? '<small>ADMITS</small><b>' + t + '</b>' : p.table ? '<small>TABLE</small><b>' + BQ.esc(p.table) + '</b>' : '<small>no table</small>') + '</div>' +
         '<div class="ci-count">' + h + ' / ' + t + '<small>here</small></div>' +
         '<div class="ci-btns">' + (done ? '<button class="btn sm" data-reset="' + p.id + '">Undo</button>' :

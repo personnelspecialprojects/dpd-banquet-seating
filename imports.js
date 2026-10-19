@@ -221,7 +221,7 @@ IM.parseAwardGrid = function (grid) {
       a = byKey[key] = { segment: seg, name: seg.replace(/\s+awards?$/i, '') ? seg.replace(/awards$/i, 'Award') : 'Award', logNo: log, recipients: [], notes: [] };
       out.awards.push(a);
     }
-    a.recipients.push({ rank, name: nm.name, badge: nm.badge, memo, note, count: 1 });
+    a.recipients.push({ rank: rank || nm.rankTag, name: nm.name, badge: nm.badge, memo, note, count: 1 });
     if (note) a.notes.push(nm.name + ': ' + note);
   }
   out.awards.forEach(a => { a.kind = a.recipients.length > 1 ? 'Group' : 'Individual'; a.notes = a.notes.join('; '); });
@@ -291,6 +291,187 @@ IM.awardsDialog = async function () {
         }
         BQ.mergeHistory(since, 'Imported award file ' + file.name);
         BQ.ui.toast('Imported ' + res.awards.length + ' awards ✓', 'ok');
+      }
+    }]
+  });
+  BQ.ui.segs(m.el);
+};
+
+/* ---------------------------------------------------------------------
+   HIGHEST HONORS LIST (Word document)
+   Layout: an award heading (e.g. "Officer of the Year"), then lines like
+     Sergeant John Smith - Robbery Unit
+   Reads the .docx in the browser (JSZip), or text pasted from Word.
+   --------------------------------------------------------------------- */
+IM.RANK_PREFIX = /^(asst\.?\s+chief(\s+of\s+police)?|assistant\s+chief(\s+of\s+police)?|deputy\s+chief(\s+of\s+police)?|chief\s+of\s+police|chief|major|maj\.|captain|capt\.|lieutenant|lt\.|sergeant|sgt\.|senior\s+corporal|sr\.?\s*corporal|sr\.?\s*cpl\.?|corporal|cpl\.|detective|det\.|police\s+officer|p\.\s?o\.|officer|ofc\.|professional\s+staff|mr\.|mrs\.|ms\.|miss|dr\.)\s+/i;
+IM.HONOR_SEP = /\s+[-–—]\s+|\s*[–—]\s*/;
+
+// Word .docx → [{text, heading, bold, list}]
+IM.docxLines = async function (buf) {
+  if (typeof JSZip === 'undefined') throw new Error('The Word reader didn’t load (check the internet connection). You can paste the text instead.');
+  const zip = await JSZip.loadAsync(buf);
+  const f = zip.file('word/document.xml');
+  if (!f) throw new Error('This doesn’t look like a Word (.docx) file.');
+  const xml = new DOMParser().parseFromString(await f.async('string'), 'application/xml');
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const out = [];
+  const para = p => {
+    const runs = Array.from(p.getElementsByTagNameNS(W, 'r'));
+    let text = '', boldChars = 0, chars = 0;
+    runs.forEach(r => {
+      const t = Array.from(r.childNodes).map(n => n.localName === 't' ? n.textContent : n.localName === 'tab' ? '\t' : n.localName === 'br' ? ' ' : '').join('');
+      if (!t) return;
+      text += t; chars += t.trim().length;
+      const rp = r.getElementsByTagNameNS(W, 'rPr')[0];
+      const b = rp && rp.getElementsByTagNameNS(W, 'b')[0];
+      if (b && b.getAttributeNS(W, 'val') !== '0' && b.getAttributeNS(W, 'val') !== 'false') boldChars += t.trim().length;
+    });
+    const ps = p.getElementsByTagNameNS(W, 'pStyle')[0];
+    const style = ps ? (ps.getAttributeNS(W, 'val') || '') : '';
+    return { text: text.replace(/\s+/g, ' ').trim(), heading: /heading|title/i.test(style), bold: chars > 0 && boldChars >= chars * 0.8, list: !!p.getElementsByTagNameNS(W, 'numPr')[0] || /list/i.test(style) };
+  };
+  const body = xml.getElementsByTagNameNS(W, 'body')[0];
+  Array.from(body.childNodes).forEach(n => {
+    if (n.localName === 'p') { const l = para(n); if (l.text) out.push(l); }
+    if (n.localName === 'tbl') {
+      Array.from(n.getElementsByTagNameNS(W, 'tr')).forEach(tr => {
+        const cells = Array.from(tr.getElementsByTagNameNS(W, 'tc')).map(tc => Array.from(tc.getElementsByTagNameNS(W, 'p')).map(p => para(p).text).join(' ').trim()).filter(Boolean);
+        if (!cells.length) return;
+        const first = Array.from(tr.getElementsByTagNameNS(W, 'p'))[0];
+        const pl = first ? para(first) : { heading: false, bold: false };
+        out.push({ text: cells.length === 1 ? cells[0] : cells[0] + ' - ' + cells.slice(1).join(', '), heading: pl.heading, bold: pl.bold && cells.length === 1, list: false });
+      });
+    }
+  });
+  return out;
+};
+
+IM.textLines = text => String(text || '').split(/\r?\n/).map(t => ({ text: t.replace(/\s+/g, ' ').trim(), heading: false, bold: false, list: /^\s*([•·\-*▪●]|\d+[.)])\s+/.test(t) })).filter(l => l.text);
+
+IM.parseHonorRecipient = function (line) {
+  let t = line.replace(/^([•·*▪●]|\d+[.)])\s+/, '').trim();
+  let unit = '';
+  const m = t.split(IM.HONOR_SEP);
+  if (m.length > 1) { unit = m.slice(1).join(' - ').trim(); t = m[0].trim(); }
+  let rank = '';
+  const rm = t.match(IM.RANK_PREFIX);
+  if (rm) { rank = rm[0].trim(); t = t.slice(rm[0].length).trim(); }
+  let badge = '';
+  const bm = t.match(/\s*[#(]\s*(\d{3,7})\)?\s*$/);
+  if (bm) { badge = bm[1]; t = t.slice(0, bm.index).trim(); }
+  return { rank, name: t.replace(/,$/, ''), badge, unit, count: 1 };
+};
+
+IM.parseHonors = function (lines) {
+  const awards = [], unparsed = [];
+  let cur = null;
+  lines.forEach(l => {
+    const t = l.text;
+    const hasSep = IM.HONOR_SEP.test(t);
+    const awardWords = /\b(award|year|medal|honou?r|citation|excellence|valor|distinguished|service|achievement|recognition|of the)\b/i.test(t);
+    const personish = IM.RANK_PREFIX.test(t) && !awardWords;   // e.g. "Sergeant John Smith" with no unit
+    const looksLikeHeading = l.heading || (l.bold && !hasSep) || (!hasSep && !l.list && !personish);
+    if (looksLikeHeading || (!cur && !hasSep && !l.list)) {
+      cur = { name: t.replace(/[:：]\s*$/, ''), recipients: [] };
+      awards.push(cur);
+      return;
+    }
+    if (!cur) { unparsed.push(t); return; }
+    const r = IM.parseHonorRecipient(t);
+    if (r.name) cur.recipients.push(r); else unparsed.push(t);
+  });
+  return { awards: awards.filter(a => a.recipients.length || a.name), unparsed };
+};
+
+IM.honorsDialog = function () {
+  const body = '<p>Choose the Word document with the highest honors. Each award heading should be followed by lines like <b>Sergeant John Smith - Robbery Unit</b>.</p>' +
+    '<button class="btn primary" id="hdFile">📄 Choose the Word file (.docx)…</button>' +
+    '<p class="muted small" style="margin-top:14px">Or copy everything in the Word document (Ctrl+A, Ctrl+C) and paste it here:</p>' +
+    '<textarea id="hdText" rows="8" class="block" placeholder="Officer of the Year\nSergeant John Smith - Robbery Unit\n\nDetective of the Year\nDetective Jane Doe - Homicide Unit"></textarea>';
+  const m = BQ.ui.modal({
+    title: 'Import highest honors (Word)', body, wide: true,
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Preview pasted text', cls: 'primary', onClick: () => {
+        const txt = m.el.querySelector('#hdText').value;
+        if (!txt.trim()) { BQ.ui.toast('Paste the list first, or choose the Word file.'); return false; }
+        setTimeout(() => IM.honorsPreview(IM.parseHonors(IM.textLines(txt)), 'pasted text'));
+      }
+    }]
+  });
+  m.el.querySelector('#hdFile').onclick = async () => {
+    const file = await IM.readFile('.docx');
+    if (!file) return;
+    if (/\.doc$/i.test(file.name)) { BQ.ui.toast('That’s an older .doc file. In Word, use File → Save As → Word Document (.docx), or paste the text instead.', 'bad'); return; }
+    try {
+      const lines = await IM.docxLines(await file.arrayBuffer());
+      m.close();
+      IM.honorsPreview(IM.parseHonors(lines), file.name);
+    } catch (e) { BQ.ui.toast('Couldn’t read that file: ' + e.message, 'bad'); }
+  };
+};
+
+IM.honorsPreview = function (res, source) {
+  const awards = res.awards.filter(a => a.recipients.length);
+  if (!awards.length) { BQ.ui.toast('No award headings with names under them were found.', 'bad'); return; }
+  let matched = 0, people = 0;
+  awards.forEach(a => a.recipients.forEach(r => { people++; const p = BQ.findPartyForName(r.name); r.pid = p ? p.id : null; if (p) matched++; }));
+  const segDefault = 'Highest Honors';
+  const existing = BQ.state.awards.filter(a => (a.segment || '').toLowerCase() === segDefault.toLowerCase());
+  const empty = res.awards.filter(a => !a.recipients.length);
+  const body = '<p>From <b>' + BQ.esc(source) + '</b>:</p>' +
+    '<div class="glance"><div><b>' + awards.length + '</b><span>awards</span></div><div><b>' + people + '</b><span>recipients</span></div><div><b>' + matched + '</b><span>already on guest list</span></div></div>' +
+    '<div class="scroll-box"><table class="grid"><thead><tr><th>Award</th><th>Recipient</th><th>Unit</th><th>Guest list</th></tr></thead><tbody>' +
+    awards.map(a => a.recipients.map((r, i) => '<tr><td>' + (i === 0 ? '<b>' + BQ.esc(a.name) + '</b>' : '') + '</td><td>' + BQ.esc(BQ.recipLabel(r, { noUnit: true })) + '</td><td>' + BQ.esc(r.unit) + '</td><td>' +
+      (r.pid ? '<span class="ok">✓ ' + BQ.esc(BQ.recipientSeat(r).text) + '</span>' : '<span class="muted">not on list</span>') + '</td></tr>').join('')).join('') +
+    '</tbody></table></div>' +
+    (empty.length ? '<p class="warn small">Headings with no names under them (left out): ' + empty.map(a => BQ.esc(a.name)).join(', ') + '</p>' : '') +
+    (res.unparsed.length ? '<p class="warn small">Lines before the first award heading (left out): ' + res.unparsed.map(BQ.esc).join(' · ') + '</p>' : '') +
+    '<div class="field two"><div><label>Program segment for these awards</label><input id="hpSeg" value="' + segDefault + '"/></div>' +
+    '<div><label>Where in the program</label><div class="seg" id="hpPos"><button data-v="end" class="on">At the end</button><button data-v="start">At the beginning</button></div></div></div>' +
+    (existing.length ? '<label class="chk"><input type="checkbox" id="hpReplace" checked/> Replace the ' + existing.length + ' awards already in “' + segDefault + '” (for re-importing an updated list)</label>' : '') +
+    (people - matched ? '<div class="card soft"><label class="chk"><input type="checkbox" id="hpAdd" checked/> <b>Add the ' + (people - matched) + ' recipients who aren’t on the guest list</b> to the waiting list</label>' +
+      '<div class="field" style="margin:8px 0 6px"><label>Seats for each</label><div class="seg" id="hpSeats">' + [1, 2, 3, 4].map(n => '<button data-v="' + n + '" class="' + (n === 2 ? 'on' : '') + '">' + (n === 1 ? 'Just them' : 'Them + ' + (n - 1)) + '</button>').join('') + '</div></div>' +
+      '<label class="chk"><input type="checkbox" id="hpUnit" checked/> Seat them near their unit (when the unit has seats)</label><br>' +
+      '<label class="chk"><input type="checkbox" id="hpFront" checked/> Ask for seats near the front</label></div>' : '') +
+    '<p class="muted small">One Undo reverses the whole import. The Excel awards are not touched.</p>';
+  const m = BQ.ui.modal({
+    title: 'Import highest honors', body, wide: true,
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Import ' + awards.length + ' awards', cls: 'primary', onClick: async () => {
+        const seg = m.el.querySelector('#hpSeg').value.trim() || segDefault;
+        const atStart = m.el.querySelector('#hpPos .on').dataset.v === 'start';
+        const rep = m.el.querySelector('#hpReplace');
+        const replaceThese = rep && rep.checked ? BQ.state.awards.filter(a => (a.segment || '').toLowerCase() === seg.toLowerCase()) : [];
+        const keep = BQ.awardsSorted().filter(a => !replaceThese.includes(a));
+        const addEl = m.el.querySelector('#hpAdd');
+        const opts = addEl && addEl.checked ? { seats: Number(m.el.querySelector('#hpSeats .on').dataset.v), nearUnit: m.el.querySelector('#hpUnit').checked, front: m.el.querySelector('#hpFront').checked, together: false } : null;
+        const since = BQ.history.length;
+        const changes = replaceThese.map(a => ({ kind: 'award', before: BQ.clone(a), after: null }));
+        let order = 0;
+        const newOnes = awards.map(a => ({ name: a.name, logNo: '', segment: seg, cat: '', kind: a.recipients.length > 1 ? 'Group' : 'Individual', presenter: '', notes: '', status: '', recipients: a.recipients }));
+        const sequence = atStart ? newOnes.concat(keep) : keep.concat(newOnes);
+        sequence.forEach(x => {
+          order++;
+          if (newOnes.includes(x)) changes.push({ kind: 'award', before: null, after: Object.assign(x, { order }) });
+          else if ((x.order || 0) !== order) changes.push({ kind: 'award', before: BQ.clone(x), after: Object.assign(BQ.clone(x), { order }) });
+        });
+        BQ.ui.toast('Importing…');
+        const ok = await BQ.commit('Imported ' + awards.length + ' highest honors from ' + source, changes);
+        if (!ok) return;
+        if (opts) {
+          const ids = new Set(changes.filter(c => c.after && !c.before).map(c => c.after.id));
+          const ppl = [];
+          BQ.state.awards.filter(a => ids.has(a.id)).forEach(a => (a.recipients || []).forEach(r => {
+            if (r.pid && BQ.partyById(r.pid)) return;
+            const key = (r.name + '|' + (r.badge || '')).toLowerCase();
+            let p = ppl.find(x => x.key === key);
+            if (!p) { p = { key, r, awards: [] }; ppl.push(p); }
+            p.awards.push(a);
+          }));
+          if (ppl.length) await BQ.addRecipientsAsGuests(ppl, opts);
+        }
+        BQ.mergeHistory(since, 'Imported highest honors from ' + source);
+        BQ.ui.toast('Imported ' + awards.length + ' highest honors ✓', 'ok');
       }
     }]
   });

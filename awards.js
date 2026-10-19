@@ -59,7 +59,7 @@ BQ.screens.awards = {
   render(main) {
     main.innerHTML = '<div class="page wide">' +
       '<div class="page-head"><h1>Awards</h1><span class="muted" id="awCount"></span><span class="grow"></span>' +
-      '<button class="btn" id="awImport">📥 Import award file…</button>' +
+      '<button class="btn" id="awImport">📥 Import awards…</button>' +
       '<button class="btn" id="awMap">★ Recipients on map</button>' +
       '<button class="btn" id="awPrint">🖨 Print lineup</button>' +
       '<button class="btn primary" id="awAdd">＋ Add award</button></div>' +
@@ -67,7 +67,14 @@ BQ.screens.awards = {
       '<div class="toolbar"><input id="awQ" type="search" placeholder="Find a recipient, badge, or Log Number…" value="' + BQ.esc(BQ.awardView.q) + '"/></div>' +
       '<div class="aw-cols"><div class="aw-prog" id="awProg"></div><div class="aw-route card" id="awRoute"></div></div></div>';
     main.querySelector('#awAdd').onclick = () => BQ.awardDialog(null);
-    main.querySelector('#awImport').onclick = () => BQ.imports.awardsDialog();
+    main.querySelector('#awImport').onclick = async () => {
+      const v = await BQ.ui.choose('Import awards', 'Which file is it?', [
+        { label: '📊 Award spreadsheet (Excel): Rank, Name, Memo, Log Number', value: 'xlsx', cls: 'primary' },
+        { label: '📄 Highest honors list (Word): award headings with “Title Name - Unit” lines', value: 'docx', cls: 'primary' },
+        { label: 'Cancel', value: null }]);
+      if (v === 'xlsx') BQ.imports.awardsDialog();
+      if (v === 'docx') BQ.imports.honorsDialog();
+    };
     main.querySelector('#awPrint').onclick = () => BQ.exports.printLineup();
     main.querySelector('#awMap').onclick = () => { BQ.seatView.showAwards = true; BQ.ui.go('seat'); };
     main.querySelector('#awQ').oninput = e => { BQ.awardView.q = e.target.value; this.draw(); };
@@ -191,9 +198,10 @@ BQ.addRecipientsAsGuests = async function (people, o) {
     const needs = [];
     if (o.front) needs.push({ type: 'front', target: '' });
     if (o.together) p.awards.filter(a => (a.recipients || []).length > 1).slice(0, 1).forEach(a => needs.push({ type: 'near', target: 'award:' + a.id }));
+    if (o.nearUnit && p.r.unit) needs.push({ type: 'near', target: 'aff:' + p.r.unit });
     return {
       kind: 'party', before: null, after: {
-        name: p.r.name, type: 'Guest', aff: '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
+        name: p.r.name, type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
         notes: 'Award recipient: ' + p.awards.map(BQ.awardTitle).join(', ') + (p.r.badge ? ' · Badge ' + p.r.badge : '') + (p.r.rank ? ' · ' + p.r.rank : ''),
         checkedIn: 0, pinned: false, group: '', vip: false, vipCount: 0, vipIn: 0
       }, _p: p
@@ -254,6 +262,7 @@ BQ.awardDialog = function (a) {
       return '<div class="recrow"><input class="rank" data-rk="' + i + '" value="' + BQ.esc(r.rank || '') + '" placeholder="Rank"/>' +
         '<input list="adPeople" data-i="' + i + '" value="' + BQ.esc(r.name) + '" placeholder="Name"/>' +
         '<input class="badge" data-bd="' + i + '" value="' + BQ.esc(r.badge || '') + '" placeholder="Badge"/>' +
+        '<input class="unit" data-un="' + i + '" value="' + BQ.esc(r.unit || '') + '" placeholder="Unit"/>' +
         '<input type="number" min="1" class="cnt" data-c="' + i + '" value="' + (r.count || 1) + '" title="How many people walk up for this name"/>' +
         '<span class="rs r-' + s.state + '">' + BQ.esc(s.party ? s.text + ' · with ' + s.party.name : s.text) + '</span>' +
         (s.state === 'missing' ? '<select class="sm" data-link="' + i + '">' + partyOpts + '</select>' : '<button class="linkbtn" data-unlink="' + i + '">unlink</button>') +
@@ -263,6 +272,7 @@ BQ.awardDialog = function (a) {
     R.querySelectorAll('[data-i]').forEach(inp => inp.onchange = () => { const r = d.recipients[Number(inp.dataset.i)]; r.name = inp.value.trim(); r.pid = null; draw(); });
     R.querySelectorAll('[data-rk]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.rk)].rank = inp.value.trim(); });
     R.querySelectorAll('[data-bd]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.bd)].badge = inp.value.trim(); });
+    R.querySelectorAll('[data-un]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.un)].unit = inp.value.trim(); });
     R.querySelectorAll('[data-c]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.c)].count = Math.max(1, parseInt(inp.value, 10) || 1); });
     R.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { d.recipients.splice(Number(b.dataset.rm), 1); draw(); });
     R.querySelectorAll('[data-link]').forEach(sel => sel.onchange = () => { d.recipients[Number(sel.dataset.link)].pid = Number(sel.value) || null; draw(); });

@@ -472,7 +472,7 @@ BQ.screens.seat = {
       '    <input id="mapFind" type="search" placeholder="Find a guest or table #" list="findList"/><datalist id="findList"></datalist>' +
       '    <label class="sel">Color tables by <select id="colorBy">' +
       '      <option value="status">Seats filled</option><option value="zone">Areas / zones</option><option value="needs">Special requests</option>' +
-      '      <option value="pay">Payment</option><option value="checkin">Check-in</option><option value="vip">VIP reception</option></select></label>' +
+      (BQ.config.trackPayment ? '      <option value="pay">Payment</option>' : '') + '<option value="checkin">Check-in</option><option value="vip">VIP reception</option></select></label>' +
       '    <label class="chk"><input type="checkbox" id="showAwards"' + (V.showAwards ? ' checked' : '') + '/> ★ Award recipients</label>' +
       '    <span class="grow"></span>' +
       '    <button class="btn" id="btnAuto" title="Suggest seats for everyone waiting">✨ Auto-seat…</button>' +
@@ -645,7 +645,7 @@ BQ.partyCardHtml = function (p, o) {
     const r = BQ.checkNeed(p, n);
     return '<span class="need n-' + r.state + '" title="' + BQ.esc(BQ.needText(n) + ' — ' + r.msg) + '">' + (BQ.NEEDS[n.type] || {}).icon + '</span>';
   }).join('');
-  const pay = p.pay ? '<span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay.replace(' (no charge)', '')) + '</span>' : '';
+  const pay = BQ.config.trackPayment && p.pay ? '<span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay.replace(' (no charge)', '')) + '</span>' : '';
   const group = (p.group ? '<span class="muted small" title="Part of a split party">⛓</span>' : '') + (p.vip ? ' <span class="vipchip" title="VIP reception">⭐</span>' : '');
   return '<div class="pcard' + (o.selected ? ' selected' : '') + (BQ.isOrg(p) ? ' org' : '') + '" data-pid="' + p.id + '"' + (o.color ? ' style="--pc:' + o.color + '"' : '') + '>' +
     '<div class="pc-main"><span class="pc-icon" title="' + BQ.esc(ti.label) + '">' + ti.icon + '</span>' +

@@ -299,18 +299,22 @@ X.checkinXlsx = async function () {
   const ws = wb.addWorksheet('Check-In', { views: [{ state: 'frozen', ySplit: 3 }] });
   ws.columns = [{ width: 7 }, { width: 30 }, { width: 9 }, { width: 30 }, { width: 8 }, { width: 16 }, { width: 8 }];
   X.title(ws, BQ.state.event.title + ' — Check-In', 'Tick the box as each guest arrives · ★ = VIP reception', 7);
-  X.header(ws, 3, ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'Payment', 'VIP']);
+  const P = BQ.config.trackPayment;
+  X.header(ws, 3, P ? ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'Payment', 'VIP'] : ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'VIP']);
   let r = 4;
   X.alphaRows().forEach(x => {
     const row = ws.getRow(r);
-    row.values = ['☐', x.org ? x.name : (x.last + (x.first ? ', ' + x.first : '')), x.table || '—', x.party, x.seats, x.leader ? (x.p.pay || '') : '', x.p.vip ? '★' : ''];
-    row.getCell(7).alignment = { horizontal: 'center' };
+    const vals = ['☐', x.org ? x.name : (x.last + (x.first ? ', ' + x.first : '')), x.table || '—', x.party, x.seats];
+    if (P) vals.push(x.leader ? (x.p.pay || '') : '');
+    vals.push(x.p.vip ? '★' : '');
+    row.values = vals;
+    row.getCell(vals.length).alignment = { horizontal: 'center' };
     row.font = { size: 13 };
     row.getCell(1).font = { size: 16 }; row.getCell(1).alignment = { horizontal: 'center' };
     row.getCell(3).font = { size: 14, bold: true }; row.getCell(3).alignment = { horizontal: 'center' };
     row.getCell(5).alignment = { horizontal: 'center' };
-    if (x.leader && BQ.payClass(x.p.pay) === 'bad') row.getCell(6).font = { size: 12, bold: true, color: { argb: 'FFC00000' } };
-    for (let i = 1; i <= 7; i++) row.getCell(i).border = { bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } } };
+    if (P && x.leader && BQ.payClass(x.p.pay) === 'bad') row.getCell(6).font = { size: 12, bold: true, color: { argb: 'FFC00000' } };
+    for (let i = 1; i <= vals.length; i++) row.getCell(i).border = { bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } } };
     r++;
   });
   X.printSetup(ws, 'portrait', '3:3');
@@ -562,9 +566,9 @@ X.printRosters = function () {
 
 X.printCheckin = function () {
   const rows = X.alphaRows();
-  X.print('<div class="pci">' + X.printHead('Check-In List', '★ = VIP reception') + '<table><thead><tr><th>✓</th><th>Name</th><th>Table</th><th>Party</th><th>Payment</th></tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(x.org ? x.name : x.last + (x.first ? ', ' + x.first : '')) + (x.p.vip ? ' ★' : '') + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td><td>' +
-      (x.leader && x.p.pay && BQ.payClass(x.p.pay) !== 'ok' ? '<b>' + BQ.esc(x.p.pay) + '</b>' : '') + '</td></tr>').join('') + '</tbody></table></div>', 'portrait', 'check-in');
+  X.print('<div class="pci">' + X.printHead('Check-In List', '★ = VIP reception') + '<table><thead><tr><th>✓</th><th>Name</th><th>Table</th><th>Party</th>' + (BQ.config.trackPayment ? '<th>Payment</th>' : '') + '</tr></thead><tbody>' +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(x.org ? x.name : x.last + (x.first ? ', ' + x.first : '')) + (x.p.vip ? ' ★' : '') + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td>' +
+      (BQ.config.trackPayment ? '<td>' + (x.leader && x.p.pay && BQ.payClass(x.p.pay) !== 'ok' ? '<b>' + BQ.esc(x.p.pay) + '</b>' : '') + '</td>' : '') + '</tr>').join('') + '</tbody></table></div>', 'portrait', 'check-in');
 };
 
 X.printLineup = function () {
@@ -614,7 +618,7 @@ BQ.screens.exports = {
       tile('alpha', '🔤', 'Alphabetical list', 'Everyone A–Z by last name with their table number.') +
       tile('rosters', '🍽️', 'Table rosters', 'Each table with its guests, names, and requests, plus a summary tab.') +
       tile('checkin', '🚪', 'Check-in sheet', 'A–Z with a box to tick at the door.') +
-      tile('payment', '💲', 'Payment report', 'Who has paid, who hasn’t, with contact info.') +
+      (BQ.config.trackPayment ? tile('payment', '💲', 'Payment report', 'Who has paid, who hasn’t, with contact info.') : '') +
       tile('lineup', '🏆', 'Awards lineup', 'Program order with recipient tables and the escort pickup route.') +
       tile('awardfile', '🎖️', 'Award file + tables', 'The awards spreadsheet in its usual layout (Rank, Name, Memo, Log Number), with each person’s table added.') +
       tile('vip', '⭐', 'VIP reception list', 'Everyone invited to the VIP reception, A–Z, with how many each admits.') +
@@ -635,12 +639,13 @@ BQ.screens.exports = {
       tile('impClassic', '📥', 'From your old spreadsheet', 'Read a “Table seating” workbook (like last year’s) and add those guests and tables.') +
       tile('impPaste', '📋', 'Paste a list', 'Copy rows from Excel or an email: name, seats, and optionally table and unit.') +
       tile('impAwards', '🎖️', 'Award file', 'Read the awards spreadsheet (categories, Rank, Name_Badge, Log Number) into the Awards program.') +
+      tile('impHonors', '📄', 'Highest honors (Word)', 'Read the Word list of top awards: award headings with “Title Name - Unit” lines.') +
       tile('impBackup', '♻️', 'Restore a full backup', 'Bring back a backup file made by this app as a new event.') +
       '</div>' +
       '<p class="muted small">Tip: in the print window, choose your printer or <b>Save as PDF</b>.</p></div>';
     const go = {
       classic: X.classicXlsx, alpha: X.alphaXlsx, rosters: X.rostersXlsx, checkin: X.checkinXlsx, payment: X.paymentXlsx, lineup: X.lineupXlsx, backup: X.backupXlsx,
-      awardfile: X.awardFileXlsx, vip: X.vipXlsx, pvip: X.printVip, impAwards: () => BQ.imports.awardsDialog(),
+      awardfile: X.awardFileXlsx, vip: X.vipXlsx, pvip: X.printVip, impAwards: () => BQ.imports.awardsDialog(), impHonors: () => BQ.imports.honorsDialog(),
       pmap: X.printMap, png: X.mapPng, palpha: X.printAlpha, prost: X.printRosters, pcheck: X.printCheckin, pline: X.printLineup, tents: X.printTents, escort: X.printEscort,
       impClassic: () => BQ.imports.classicDialog(), impPaste: () => BQ.imports.pasteDialog(), impBackup: () => BQ.imports.restoreDialog()
     };

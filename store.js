@@ -19,7 +19,7 @@ BQ.schema = {
   Banquet_Parties: [
     ['EventId', 'Number'], ['PartyType', 'Text'], ['Affiliation', 'Text'], ['Seats', 'Number'],
     ['TableNo', 'Text'], ['GroupKey', 'Text'], ['ContactPhone', 'Text'], ['ContactEmail', 'Text'],
-    ['PaymentStatus', 'Text'], ['PaymentNote', 'Text'], ['NeedsJson', 'Note'], ['PartyNotes', 'Note'],
+    ['PaymentStatus', 'Text', 'pay'], ['PaymentNote', 'Text', 'pay'], ['NeedsJson', 'Note'], ['PartyNotes', 'Note'],
     ['GuestNames', 'Note'], ['CheckedIn', 'Number'], ['CheckInTime', 'DateTime'], ['Pinned', 'Boolean'],
     ['VipReception', 'Boolean'], ['VipCount', 'Number'], ['VipCheckedIn', 'Number']
   ],
@@ -32,6 +32,9 @@ BQ.schema = {
     ['EventId', 'Number'], ['LogDetails', 'Note'], ['ActorName', 'Text'], ['ActorEmail', 'Text'], ['LogTime', 'DateTime']
   ]
 };
+
+// columns tagged 'pay' only exist when payment tracking is turned on
+Object.keys(BQ.schema).forEach(l => { BQ.schema[l] = BQ.schema[l].filter(f => f[2] !== 'pay' || BQ.config.trackPayment); });
 
 BQ.fieldXml = function (name, type) {
   const base = 'DisplayName="' + name + '" Name="' + name + '" StaticName="' + name + '"';
@@ -79,15 +82,14 @@ BQ.map_ = {
     };
   },
   partyTo(p) {
-    return {
+    return Object.assign({
       Title: p.name || '(no name)', EventId: p.eventId, PartyType: p.type || 'Guest', Affiliation: p.aff || '',
       Seats: Number(p.seats) || 0, TableNo: p.table ? String(p.table) : '', GroupKey: p.group || '',
-      ContactPhone: p.phone || '', ContactEmail: p.email || '', PaymentStatus: p.pay || '',
-      PaymentNote: p.payNote || '', NeedsJson: JSON.stringify(p.needs || []), PartyNotes: p.notes || '',
+      ContactPhone: p.phone || '', ContactEmail: p.email || '', NeedsJson: JSON.stringify(p.needs || []), PartyNotes: p.notes || '',
       GuestNames: (p.guests || []).join('\n'), CheckedIn: Number(p.checkedIn) || 0,
       CheckInTime: p.checkInTime || null, Pinned: !!p.pinned,
       VipReception: !!p.vip, VipCount: Number(p.vipCount) || 0, VipCheckedIn: Number(p.vipIn) || 0
-    };
+    }, BQ.config.trackPayment ? { PaymentStatus: p.pay || '', PaymentNote: p.payNote || '' } : {});
   },
   awardFrom(it) {
     return {
