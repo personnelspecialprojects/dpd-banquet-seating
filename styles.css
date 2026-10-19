@@ -21,6 +21,7 @@
   --okbg: #16301B; --badbg: #3A1A1A; --warnbg: #3A2D10; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body { font-family: var(--font); font-size: 15px; color: var(--ink); background: var(--bg); line-height: 1.4; }
 h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.01em; }
@@ -470,6 +471,20 @@ body.kiosk .topbar .user { display: none; }
 .award.picked .a-num { background: var(--gold2); color: #3A2600; }
 .segrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 6px; background: var(--card); }
 .segrow input[data-name] { flex: 1; min-width: 160px; }
+
+.bulkrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; margin: 0 0 8px; background: var(--card); }
+.bulkrow .br-t { flex: 1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bulkrow .br-in { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.bulkrow select, .bulkrow input { min-height: 34px; padding: 4px 8px; }
+table.grid tr.picked td { background: var(--accent-soft); }
+.selbar .sep { width: 1px; height: 22px; background: var(--line); }
+
+.toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+.toast-act { font: inherit; font-weight: 700; background: rgba(255,255,255,.2); color: inherit; border: 1px solid rgba(255,255,255,.5); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+
+.ci-nums { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.numchip { background: var(--accent-soft); border-radius: 999px; padding: 0 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.ci .vipchip { font-size: 12px; }
 
 /* ---- responsive ---- */
 @media (max-width: 1280px) {

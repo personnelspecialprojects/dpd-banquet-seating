@@ -223,7 +223,7 @@ X.alphaXlsx = async function () {
   const ws = wb.addWorksheet('Alphabetical', { views: [{ state: 'frozen', ySplit: 3 }] });
   ws.columns = [{ width: 24 }, { width: 22 }, { width: 10 }, { width: 38 }, { width: 10 }, { width: 10 }];
   X.title(ws, BQ.state.event.title + ' — Alphabetical List', 'Printed ' + new Date().toLocaleString(), 6);
-  X.header(ws, 3, ['Last Name', 'First Name', 'Table', 'Party / Group', 'Seats', 'VIP recep.']);
+  X.header(ws, 3, ['Last Name', 'First Name', 'Table', 'Party / Group', 'Seats', 'VIP tickets']);
   let r = 4, letter = '';
   X.alphaRows().forEach(x => {
     const L = (x.key[0] || '#').toUpperCase();
@@ -235,7 +235,7 @@ X.alphaXlsx = async function () {
       r++;
     }
     const row = ws.getRow(r);
-    row.values = [x.last, x.first, x.table || 'Not seated', x.party, x.seats, x.p.vip ? (x.leader ? '★ ' + BQ.vipCount(x.p) : '★') : ''];
+    row.values = [x.last, x.first, x.table || 'Not seated', x.party, x.seats, x.p.vip && (x.leader || x.block) ? BQ.vipCount(x.p) : (x.p.vip ? '★' : '')];
     row.getCell(6).alignment = { horizontal: 'center' };
     row.font = { size: 12 };
     row.getCell(3).font = { size: 14, bold: true, color: { argb: x.table ? 'FF000000' : 'FFC00000' } };
@@ -304,15 +304,15 @@ X.checkinXlsx = async function () {
   const wb = X.newBook();
   const ws = wb.addWorksheet('Check-In', { views: [{ state: 'frozen', ySplit: 3 }] });
   ws.columns = [{ width: 7 }, { width: 30 }, { width: 9 }, { width: 30 }, { width: 8 }, { width: 16 }, { width: 8 }];
-  X.title(ws, BQ.state.event.title + ' — Check-In', 'Tick the box as each guest arrives · ★ = VIP reception', 7);
+  X.title(ws, BQ.state.event.title + ' — Check-In', 'Tick the box as each guest arrives · VIP tickets = how many may attend the VIP reception (★ = guest in a VIP party)', 7);
   const P = BQ.config.trackPayment;
-  X.header(ws, 3, P ? ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'Payment', 'VIP'] : ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'VIP']);
+  X.header(ws, 3, P ? ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'Payment', 'VIP tickets'] : ['Here', 'Name', 'Table', 'Party / Group', 'Seats', 'VIP tickets']);
   let r = 4;
   X.alphaRows().forEach(x => {
     const row = ws.getRow(r);
     const vals = ['☐', x.org ? x.name : (x.last + (x.first ? ', ' + x.first : '')), x.table || '—', x.party, x.seats];
     if (P) vals.push(x.leader ? (x.p.pay || '') : '');
-    vals.push(x.p.vip ? '★' : '');
+    vals.push(x.p.vip ? (x.leader ? BQ.vipCount(x.p) : '★') : '');
     row.values = vals;
     row.getCell(vals.length).alignment = { horizontal: 'center' };
     row.font = { size: 13 };
@@ -435,11 +435,11 @@ X.vipXlsx = async function () {
   const ws = wb.addWorksheet('VIP Reception', { views: [{ state: 'frozen', ySplit: 3 }] });
   ws.columns = [{ width: 7 }, { width: 32 }, { width: 10 }, { width: 40 }, { width: 22 }, { width: 9 }];
   X.title(ws, BQ.state.event.title + ' — VIP Reception', rows.reduce((s, x) => s + x.n, 0) + ' people · ' + rows.length + ' parties', 6);
-  X.header(ws, 3, ['Here', 'Name', 'Admits', 'Guest names', 'Unit / org', 'Table']);
+  X.header(ws, 3, ['Here', 'Name', 'VIP tickets', 'Seats', 'Guest names', 'Unit / org', 'Table']);
   rows.forEach((x, i) => {
     const row = ws.getRow(i + 4);
     const nm = BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name));
-    row.values = ['☐', nm, x.n, (x.p.guests || []).join(', '), x.p.aff, x.p.table || ''];
+    row.values = ['☐', nm, x.n, x.p.seats, (x.p.guests || []).join(', '), x.p.aff, x.p.table || ''];
     row.font = { size: 13 };
     row.getCell(1).alignment = { horizontal: 'center' }; row.getCell(3).alignment = { horizontal: 'center' }; row.getCell(6).alignment = { horizontal: 'center' };
     row.getCell(3).font = { size: 13, bold: true };
@@ -451,8 +451,8 @@ X.vipXlsx = async function () {
 X.printVip = function () {
   const rows = X.vipRows();
   if (!rows.length) { BQ.ui.toast('Nobody is marked for the VIP reception yet.'); return; }
-  X.print('<div class="pci">' + X.printHead('VIP Reception', rows.reduce((s, x) => s + x.n, 0) + ' people') + '<table><thead><tr><th>✓</th><th>Name</th><th>Admits</th><th>Guests</th><th>Table</th></tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name))) + '</td><td class="t">' + x.n + '</td><td>' + BQ.esc((x.p.guests || []).join(', ')) + '</td><td>' + BQ.esc(x.p.table || '') + '</td></tr>').join('') +
+  X.print('<div class="pci">' + X.printHead('VIP Reception', rows.reduce((s, x) => s + x.n, 0) + ' people') + '<table><thead><tr><th>✓</th><th>Name</th><th>VIP tickets</th><th>Seats</th><th>Guests</th><th>Table</th></tr></thead><tbody>' +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name))) + '</td><td class="t">' + x.n + '</td><td class="c">' + x.p.seats + '</td><td>' + BQ.esc((x.p.guests || []).join(', ')) + '</td><td>' + BQ.esc(x.p.table || '') + '</td></tr>').join('') +
     '</tbody></table></div>', 'portrait', 'VIP reception list');
 };
 
@@ -573,8 +573,8 @@ X.printRosters = function () {
 
 X.printCheckin = function () {
   const rows = X.alphaRows();
-  X.print('<div class="pci">' + X.printHead('Check-In List', '★ = VIP reception') + '<table><thead><tr><th>✓</th><th>Name</th><th>Table</th><th>Party</th>' + (BQ.config.trackPayment ? '<th>Payment</th>' : '') + '</tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(x.org ? x.name : x.last + (x.first ? ', ' + x.first : '')) + (x.p.vip ? ' ★' : '') + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td>' +
+  X.print('<div class="pci">' + X.printHead('Check-In List') + '<table><thead><tr><th>✓</th><th>Name</th><th>Table</th><th>Party</th><th>Seats</th><th>VIP tickets</th>' + (BQ.config.trackPayment ? '<th>Payment</th>' : '') + '</tr></thead><tbody>' +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(x.org ? x.name : x.last + (x.first ? ', ' + x.first : '')) + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td><td class="c">' + (x.seats || '') + '</td><td class="c">' + (x.p.vip ? (x.leader ? '⭐ ' + BQ.vipCount(x.p) : '★') : '') + '</td>' +
       (BQ.config.trackPayment ? '<td>' + (x.leader && x.p.pay && BQ.payClass(x.p.pay) !== 'ok' ? '<b>' + BQ.esc(x.p.pay) + '</b>' : '') + '</td>' : '') + '</tr>').join('') + '</tbody></table></div>', 'portrait', 'check-in');
 };
 
@@ -638,7 +638,7 @@ BQ.screens.exports = {
       (BQ.config.trackPayment ? tile('payment', '💲', 'Payment report', 'Who has paid, who hasn’t, with contact info.') : '') +
       tile('lineup', '🏆', 'Awards lineup', 'Program order with recipient tables and the escort pickup route.') +
       tile('awardfile', '🎖️', 'Award file + tables', 'The awards spreadsheet in its usual layout (Rank, Name, Memo, Log Number), with each person’s table added.') +
-      tile('vip', '⭐', 'VIP reception list', 'Everyone invited to the VIP reception, A–Z, with how many each admits.') +
+      tile('vip', '⭐', 'VIP reception list', 'Everyone invited to the VIP reception, A–Z, with VIP tickets and seats.') +
       tile('backup', '💾', 'Full backup', 'Everything in one file. Can be restored later.') +
       '</div>' +
       '<h2 class="sec">Print or save as PDF</h2><div class="tiles">' +

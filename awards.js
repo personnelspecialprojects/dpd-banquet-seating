@@ -74,6 +74,7 @@ BQ.screens.awards = {
       '<button class="btn" id="awPrint">🖨 Print lineup</button>' +
       '<button class="btn primary" id="awAdd">＋ Add award</button></div>' +
       '<div id="awAlert"></div><div id="awSelBar"></div>' +
+      '<div class="row gap" style="margin:-4px 0 10px"><button class="btn sm ghost" id="awSelAll">☑ Select all awards</button></div>' +
       '<div class="toolbar"><input id="awQ" type="search" placeholder="Find a recipient, badge, or Log Number…" value="' + BQ.esc(BQ.awardView.q) + '"/></div>' +
       '<div class="aw-cols"><div class="aw-prog" id="awProg"></div><div class="aw-route card" id="awRoute"></div></div></div>';
     main.querySelector('#awAdd').onclick = () => BQ.awardDialog(null);
@@ -87,6 +88,7 @@ BQ.screens.awards = {
     };
     main.querySelector('#awPrint').onclick = () => BQ.exports.printLineup();
     main.querySelector('#awSegs').onclick = () => BQ.segmentsDialog();
+    main.querySelector('#awSelAll').onclick = () => { BQ.awardView.sel = new Set(BQ.state.awards.map(a => a.id)); this.draw(); };
     main.querySelector('#awMap').onclick = () => { BQ.seatView.showAwards = true; BQ.ui.go('seat'); };
     main.querySelector('#awQ').oninput = e => { BQ.awardView.q = e.target.value; this.draw(); };
     this.draw();
@@ -153,8 +155,16 @@ BQ.screens.awards = {
     if (!sel.size) { bar.innerHTML = ''; return; }
     const names = BQ.segments().map(s => s.name);
     bar.innerHTML = '<div class="selbar"><b>' + sel.size + ' selected</b> → Move to <select id="sbSeg">' + names.map(n => '<option value="' + BQ.esc(n) + '">' + BQ.esc(n || 'Program') + '</option>').join('') +
-      '<option value="__new">＋ New segment…</option></select><button class="btn primary sm" id="sbGo">Move</button><button class="btn sm ghost" id="sbClear">Clear</button></div>';
+      '<option value="__new">＋ New segment…</option></select><button class="btn primary sm" id="sbGo">Move</button>' +
+      '<span class="sep"></span><button class="btn sm" id="sbVip">⭐ VIP reception for their recipients…</button><button class="btn sm ghost" id="sbClear">Clear</button></div>';
     bar.querySelector('#sbClear').onclick = () => { sel.clear(); this.draw(); };
+    bar.querySelector('#sbVip').onclick = () => {
+      const ids = new Set(), missing = [];
+      BQ.state.awards.filter(a => sel.has(a.id)).forEach(a => (a.recipients || []).forEach(r => { if (r.pid && BQ.partyById(r.pid)) ids.add(r.pid); else missing.push(r.name); }));
+      if (!ids.size) { BQ.ui.toast('None of these recipients are on the guest list yet. Add them first (yellow box at the top).', 'bad'); return; }
+      sel.clear();
+      BQ.bulkEditDialog(Array.from(ids), missing.length ? BQ.plural(missing.length, 'recipient') + ' aren’t on the guest list yet, so they’re not included: ' + missing.slice(0, 6).map(BQ.esc).join(', ') + (missing.length > 6 ? '…' : '') : '');
+    };
     bar.querySelector('#sbGo').onclick = async () => {
       let target = bar.querySelector('#sbSeg').value;
       const ch = [];
@@ -216,18 +226,19 @@ BQ.addRecipientsDialog = function (items) {
   const body = '<p><b>' + people.length + '</b> recipient' + (people.length === 1 ? '' : 's') + ' will be added to the waiting list so you can seat them.</p>' +
     '<div class="field"><label>Seats for each recipient</label><div class="seg" id="arSeats">' + [1, 2, 3, 4].map(n => '<button data-v="' + n + '" class="' + (n === 2 ? 'on' : '') + '">' + (n === 1 ? 'Just them' : n === 2 ? 'Them + 1 guest' : 'Them + ' + (n - 1) + ' guests') + '</button>').join('') + '</div>' +
     '<div class="muted small">You can change any one later in their details.</div></div>' +
+    BQ.imports.vipFieldHtml('arVip') +
     '<label class="chk"><input type="checkbox" id="arTogether" checked/> Keep recipients of the same award (same Log Number) near each other</label><br>' +
     '<label class="chk"><input type="checkbox" id="arFront"' + (BQ.settings().recipientsFront ? ' checked' : '') + '/> Ask for seats near the front</label>' +
     '<div class="scroll-box"><table class="grid"><thead><tr><th>Recipient</th><th>Award(s)</th></tr></thead><tbody>' +
     people.map(p => '<tr><td>' + BQ.esc(BQ.recipLabel(p.r)) + '</td><td class="small">' + p.awards.map(a => BQ.esc(BQ.awardTitle(a))).join(', ') + '</td></tr>').join('') + '</tbody></table></div>';
   const m = BQ.ui.modal({
-    title: 'Add award recipients to the guest list', body, wide: true,
+    title: 'Add award recipients to the guest list', body, wide: true, onOpen: el => BQ.imports.wireVip(el, 'arVip'),
     buttons: [{ label: 'Cancel' }, {
       label: 'Add ' + people.length, cls: 'primary', onClick: async () => {
         const seats = Number(m.el.querySelector('#arSeats .on').dataset.v);
         const together = m.el.querySelector('#arTogether').checked;
         const front = m.el.querySelector('#arFront').checked;
-        await BQ.addRecipientsAsGuests(people, { seats, together, front });
+        await BQ.addRecipientsAsGuests(people, { seats, together, front, vip: BQ.imports.readVip(m.el, 'arVip') });
       }
     }]
   });
@@ -248,6 +259,7 @@ BQ.addRecipientsAsGuests = async function (people, o) {
       }, _p: p
     };
   });
+  if (o.vip) creates.forEach(c => BQ.imports.applyVip(c.after, o.vip));
   const since = BQ.history.length;
   const ok = await BQ.commit('Added ' + creates.length + ' award recipients to the guest list', creates);
   if (!ok) return false;
@@ -264,7 +276,7 @@ BQ.addRecipientsAsGuests = async function (people, o) {
   touched.forEach((after, id) => links.push({ kind: 'award', before: BQ.clone(BQ.state.awards.find(x => x.id === id)), after }));
   await BQ.commit('Linked recipients to their seats', links);
   BQ.mergeHistory(since, 'Added ' + creates.length + ' award recipients to the guest list');
-  BQ.ui.toast('Added ' + creates.length + ' recipients. They’re on the Seating Map’s waiting list.', 'ok');
+  BQ.noteImport(creates.map(c => c.after.id), 'Added ' + creates.length + ' award recipients to the waiting list');
   return true;
 };
 

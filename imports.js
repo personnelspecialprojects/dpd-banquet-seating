@@ -25,6 +25,22 @@ IM.guessType = function (name) {
 };
 
 /* ---------------------------------------------------------------------
+   Shared: default seats / VIP tickets for imported guests
+   --------------------------------------------------------------------- */
+IM.vipFieldHtml = (id, label) => '<div class="field"><label>⭐ ' + (label || 'VIP reception tickets for each') + '</label><div class="row gap"><select id="' + id + 'Mode">' +
+  '<option value="none">None</option><option value="same">Same as their seats</option><option value="n">This many:</option></select>' +
+  '<input id="' + id + 'N" type="number" min="1" value="1" style="width:80px" hidden/></div></div>';
+IM.wireVip = (root, id) => { const s = root.querySelector('#' + id + 'Mode'); if (s) s.onchange = () => { root.querySelector('#' + id + 'N').hidden = s.value !== 'n'; }; };
+IM.readVip = (root, id) => { const s = root.querySelector('#' + id + 'Mode'); return s ? { mode: s.value, n: Math.max(1, parseInt(root.querySelector('#' + id + 'N').value, 10) || 1) } : null; };
+IM.applyVip = (after, v) => {
+  if (!v || v.mode === 'none') return after;
+  after.vip = true;
+  after.vipCount = v.mode === 'same' ? Number(after.seats) || 1 : v.n;
+  return after;
+};
+IM.afterNote = '<p class="muted small">Afterwards, <b>Review &amp; change these</b> opens just these guests so you can change seats or VIP tickets for all of them at once.</p>';
+
+/* ---------------------------------------------------------------------
    CLASSIC WORKBOOK PARSER
    grid: array of rows, each an array of cell strings (0-based columns)
    returns { tables: {num: {status, note, closed, sum}}, parties: [...], warnings: [] }
@@ -140,6 +156,7 @@ IM.classicPreview = function (fname, sheets, idx) {
     (missing.length ? '<p class="bad">Tables ' + missing.join(', ') + ' aren’t in this event’s room. Those guests will go to the waiting list.</p>' : '') +
     (dups.length ? '<p class="warn">' + dups.length + ' already exist here (same name and table). They will be skipped.</p>' : '') +
     (res.warnings.length ? '<details><summary>' + res.warnings.length + ' things to double-check</summary><ul class="small">' + res.warnings.map(w => '<li>' + BQ.esc(w) + '</li>').join('') + '</ul></details>' : '') +
+    IM.vipFieldHtml('icVip') + IM.afterNote +
     '<label class="chk"><input type="checkbox" id="icHolds" checked/> Also bring over “hold” and “full” table markings</label>' +
     '<div class="scroll-box"><table class="grid"><thead><tr><th>Table</th><th>Name</th><th>Seats</th><th>Type (guessed)</th><th>Note</th></tr></thead><tbody>' +
     res.parties.map(p => '<tr' + (dups.includes(p) ? ' class="muted"' : '') + '><td class="c">' + BQ.esc(p.table) + '</td><td>' + BQ.esc(p.name) + '</td><td class="c">' + p.seats + '</td><td>' + BQ.typeInfo(IM.guessType(p.name)).icon + ' ' + BQ.esc(BQ.typeInfo(IM.guessType(p.name)).label) + '</td><td class="small">' + BQ.esc(p.note) + '</td></tr>').join('') +
@@ -170,12 +187,15 @@ IM.classicPreview = function (fname, sheets, idx) {
             });
           }));
         }
+        const vipDef = IM.readVip(m.el, 'icVip');
+        changes.forEach(c => { if (c.kind === 'party') IM.applyVip(c.after, vipDef); });
         BQ.ui.toast('Importing ' + changes.length + ' items… this can take a minute.');
         const ok = await BQ.commit('Imported ' + res.parties.length + ' guests from ' + fname, changes);
-        if (ok) BQ.ui.toast('Import finished ✓', 'ok');
+        if (ok) BQ.noteImport(changes.filter(c => c.kind === 'party').map(c => c.after.id), 'Imported ' + res.parties.length + ' guests');
       }
     }]
   });
+  IM.wireVip(m.el, 'icVip');
   const sel = m.el.querySelector('#icSheet');
   if (sel) sel.onchange = () => { m.close(); IM.classicPreview(fname, sheets, Number(sel.value)); };
 };
@@ -259,16 +279,17 @@ IM.awardsDialog = async function () {
     (existing ? '<div class="field"><label>This event already has ' + existing + ' awards</label><div class="seg" id="aiMode"><button data-v="replace" class="on">Replace them</button><button data-v="add">Keep them and add these</button></div></div>' : '') +
     (people - matched ? '<div class="card soft"><label class="chk"><input type="checkbox" id="aiAdd" checked/> <b>Add the ' + (people - matched) + ' recipients who aren’t on the guest list</b> to the waiting list so they get seats</label>' +
       '<div class="field" style="margin:8px 0 6px"><label>Seats for each</label><div class="seg" id="aiSeats">' + [1, 2, 3, 4].map(n => '<button data-v="' + n + '" class="' + (n === 2 ? 'on' : '') + '">' + (n === 1 ? 'Just them' : 'Them + ' + (n - 1)) + '</button>').join('') + '</div></div>' +
+      IM.vipFieldHtml('aiVip') +
       '<label class="chk"><input type="checkbox" id="aiTogether" checked/> Keep people with the same Log Number near each other</label><br>' +
       '<label class="chk"><input type="checkbox" id="aiFront"' + (BQ.settings().recipientsFront ? ' checked' : '') + '/> Ask for seats near the front</label></div>' : '') +
     '<p class="muted small">One Undo reverses the whole import.</p>';
   const m = BQ.ui.modal({
-    title: 'Import award file', body, wide: true,
+    title: 'Import award file', body, wide: true, onOpen: el => IM.wireVip(el, 'aiVip'),
     buttons: [{ label: 'Cancel' }, {
       label: 'Import ' + res.awards.length + ' awards', cls: 'primary', onClick: async () => {
         const replace = !existing || m.el.querySelector('#aiMode .on').dataset.v === 'replace';
         const addEl = m.el.querySelector('#aiAdd');
-        const opts = addEl && addEl.checked ? { seats: Number(m.el.querySelector('#aiSeats .on').dataset.v), together: m.el.querySelector('#aiTogether').checked, front: m.el.querySelector('#aiFront').checked } : null;
+        const opts = addEl && addEl.checked ? { seats: Number(m.el.querySelector('#aiSeats .on').dataset.v), vip: IM.readVip(m.el, 'aiVip'), together: m.el.querySelector('#aiTogether').checked, front: m.el.querySelector('#aiFront').checked } : null;
         const since = BQ.history.length;
         let order = replace ? 0 : BQ.state.awards.reduce((mx, a) => Math.max(mx, a.order || 0), 0);
         const changes = (replace ? BQ.state.awards.map(a => ({ kind: 'award', before: BQ.clone(a), after: null })) : [])
@@ -431,11 +452,12 @@ IM.honorsPreview = function (res, source) {
     (existing.length ? '<label class="chk"><input type="checkbox" id="hpReplace" checked/> Replace the ' + existing.length + ' awards already in “' + segDefault + '” (for re-importing an updated list)</label>' : '') +
     (people - matched ? '<div class="card soft"><label class="chk"><input type="checkbox" id="hpAdd" checked/> <b>Add the ' + (people - matched) + ' recipients who aren’t on the guest list</b> to the waiting list</label>' +
       '<div class="field" style="margin:8px 0 6px"><label>Seats for each</label><div class="seg" id="hpSeats">' + [1, 2, 3, 4].map(n => '<button data-v="' + n + '" class="' + (n === 2 ? 'on' : '') + '">' + (n === 1 ? 'Just them' : 'Them + ' + (n - 1)) + '</button>').join('') + '</div></div>' +
+      IM.vipFieldHtml('hpVip') +
       '<label class="chk"><input type="checkbox" id="hpUnit" checked/> Seat them near their unit (when the unit has seats)</label><br>' +
       '<label class="chk"><input type="checkbox" id="hpFront" checked/> Ask for seats near the front</label></div>' : '') +
     '<p class="muted small">One Undo reverses the whole import. The Excel awards are not touched.</p>';
   const m = BQ.ui.modal({
-    title: 'Import highest honors', body, wide: true,
+    title: 'Import highest honors', body, wide: true, onOpen: el => IM.wireVip(el, 'hpVip'),
     buttons: [{ label: 'Cancel' }, {
       label: 'Import ' + awards.length + ' awards', cls: 'primary', onClick: async () => {
         const seg = m.el.querySelector('#hpSeg').value.trim() || segDefault;
@@ -444,7 +466,7 @@ IM.honorsPreview = function (res, source) {
         const replaceThese = rep && rep.checked ? BQ.state.awards.filter(a => (a.segment || '').toLowerCase() === seg.toLowerCase()) : [];
         const keep = BQ.awardsSorted().filter(a => !replaceThese.includes(a));
         const addEl = m.el.querySelector('#hpAdd');
-        const opts = addEl && addEl.checked ? { seats: Number(m.el.querySelector('#hpSeats .on').dataset.v), nearUnit: m.el.querySelector('#hpUnit').checked, front: m.el.querySelector('#hpFront').checked, together: false } : null;
+        const opts = addEl && addEl.checked ? { seats: Number(m.el.querySelector('#hpSeats .on').dataset.v), vip: IM.readVip(m.el, 'hpVip'), nearUnit: m.el.querySelector('#hpUnit').checked, front: m.el.querySelector('#hpFront').checked, together: false } : null;
         const since = BQ.history.length;
         const changes = replaceThese.map(a => ({ kind: 'award', before: BQ.clone(a), after: null }));
         // keep the Segments panel order in step (only matters once an order has been set there)
@@ -493,7 +515,7 @@ IM.parsePaste = function (text) {
     // "Laura Dodd - 4", "Laura Dodd, 4", "Laura Dodd 4", "Laura Dodd (4)"
     rows = lines.map(l => {
       const m = l.trim().match(/^(.*?)[\s,\-–:(]+(\d{1,2})\)?\s*$/);
-      return m ? [m[1].trim(), m[2]] : [l.trim(), '1'];
+      return m ? [m[1].trim(), m[2]] : [l.trim(), ''];
     });
   }
   // header row?
@@ -530,6 +552,7 @@ IM.parsePaste = function (text) {
     const vip = /^(y|yes|x|true|vip|✓|★|⭐|\d+)$/i.test(vipTxt);
     return {
       vip, vipCount: vip && /^\d+$/.test(vipTxt) ? Number(vipTxt) : 0,
+      seatsGiven: parseInt(get(r, 'seats'), 10) > 0, vipGiven: map.vip != null && vipTxt !== '',
       name, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff: get(r, 'aff'), type, pay,
       guests: get(r, 'guests').split(/[;\n]/).map(s => s.trim()).filter(Boolean), notes: get(r, 'notes'), phone: get(r, 'phone'), email: get(r, 'email')
     };
@@ -540,6 +563,8 @@ IM.pasteDialog = function () {
   const body = '<p>Copy rows from Excel (or type one per line) and paste them below. Columns in this order work best:</p>' +
     '<p class="muted small"><b>Name</b> · <b>Seats</b> · Table (optional) · Unit/org (optional). A header row with words like “Name”, “Seats”, “Table”, “Unit”, “VIP” is also understood. Lines like “Laura Dodd - 4” work too.</p>' +
     '<textarea id="ppText" rows="8" class="block" placeholder="Laura Dodd\t4\nRobbery Unit\t12\t55"></textarea>' +
+    '<div class="field two" style="margin-top:12px"><div><label>Seats for each, when the list doesn’t say</label><input id="ppSeats" type="number" min="1" value="1"/></div>' +
+    '<div>' + IM.vipFieldHtml('ppVip', 'VIP tickets for each, when the list doesn’t say') + '</div></div>' + IM.afterNote +
     '<div id="ppPrev"></div>';
   let rows = [];
   const m = BQ.ui.modal({
@@ -548,18 +573,22 @@ IM.pasteDialog = function () {
       label: 'Add these guests', cls: 'primary', onClick: async () => {
         if (!rows.length) { BQ.ui.toast('Nothing to add yet.'); return false; }
         const known = new Set(BQ.tables().map(t => String(t.n)));
+        const defSeats = Math.max(1, parseInt(m.el.querySelector('#ppSeats').value, 10) || 1);
+        const vipDef = IM.readVip(m.el, 'ppVip');
         const changes = rows.map(r => ({
           kind: 'party', before: null, after: {
-            name: r.name, type: r.type, aff: r.aff, seats: r.seats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
+            name: r.name, type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
             phone: r.phone, email: r.email, notes: [r.notes, r.table && !known.has(r.table) ? 'Asked for Table ' + r.table + ' (not in the room)' : ''].filter(Boolean).join('. '), checkedIn: 0, pinned: false, group: '',
             vip: r.vip, vipCount: r.vipCount, vipIn: 0
           }
         }));
+        changes.forEach((c, i) => { if (!rows[i].vipGiven) IM.applyVip(c.after, vipDef); });
         const ok = await BQ.commit('Added ' + rows.length + ' guests from a pasted list', changes);
-        if (ok) BQ.ui.toast('Added ' + rows.length + ' guests ✓', 'ok');
+        if (ok) BQ.noteImport(changes.map(c => c.after.id), 'Added ' + rows.length + ' guests');
       }
     }]
   });
+  IM.wireVip(m.el, 'ppVip');
   const ta = m.el.querySelector('#ppText');
   ta.oninput = () => {
     rows = IM.parsePaste(ta.value);

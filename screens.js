@@ -22,6 +22,7 @@ BQ.ui = {
       (o.buttons || [{ label: 'OK', cls: 'primary' }]).map((b, i) => '<button class="btn ' + (b.cls || '') + '" data-i="' + i + '">' + BQ.esc(b.label) + '</button>').join('') +
       '</div></div>';
     document.body.appendChild(wrap);
+    if (o.onOpen) setTimeout(() => o.onOpen(wrap));
     const m = { el: wrap, close() { wrap.remove(); document.removeEventListener('keydown', key); if (o.onClose) o.onClose(); } };
     const key = e => { if (e.key === 'Escape' && document.body.lastElementChild === wrap) m.close(); };
     document.addEventListener('keydown', key);
@@ -78,15 +79,22 @@ BQ.ui = {
     });
   },
 
-  toast(msg, kind) {
+  toast(msg, kind, action) {
     let box = document.getElementById('toasts');
     if (!box) { box = document.createElement('div'); box.id = 'toasts'; document.body.appendChild(box); }
     const t = document.createElement('div');
     t.className = 'toast ' + (kind || '');
     t.textContent = msg;
+    if (action) {
+      const b = document.createElement('button');
+      b.className = 'toast-act'; b.textContent = action.label;
+      b.onclick = () => { t.remove(); action.onClick(); };
+      t.appendChild(b);
+    }
     box.appendChild(t);
-    setTimeout(() => t.classList.add('out'), kind === 'bad' ? 7000 : 3500);
-    setTimeout(() => t.remove(), kind === 'bad' ? 7600 : 4100);
+    const life = action ? 12000 : kind === 'bad' ? 7000 : 3500;
+    setTimeout(() => t.classList.add('out'), life);
+    setTimeout(() => t.remove(), life + 600);
   },
 
   segs(root) {
@@ -229,14 +237,14 @@ BQ.ui.openParty = function (p, defaults) {
     '<div class="field two"><div><label>Unit / organization <span class="muted">(optional)</span></label><input id="pfAff" list="pfAffs" value="' + BQ.esc(d.aff) + '" placeholder="e.g. Robbery Unit"/><datalist id="pfAffs">' + affs.map(a => '<option value="' + BQ.esc(a) + '">').join('') + '</datalist></div>' +
     '<div><label>Number of seats</label><div class="stepper"><button id="pfMinus">－</button><input id="pfSeats" type="number" min="1" value="' + (d.seats || 1) + '"/><button id="pfPlus">＋</button></div></div></div>' +
     '<div class="field two"><div><label>Table</label><select id="pfTable">' + tableOpts + '</select></div>' +
-    '<div><label>&nbsp;</label><label class="chk"><input type="checkbox" id="pfPin"' + (d.pinned ? ' checked' : '') + '/> 📌 Pin to this table (no accidental moves)</label></div></div>' +
+    '<div><label>&nbsp;</label><label class="chk"><input type="checkbox" id="pfPin"' + (d.pinned ? ' checked' : '') + '/> 📌 Lock at this table <span class="muted">(can’t be dragged off or moved by auto-seat)</span></label></div></div>' +
     '<div class="field vipbox"><label class="chk"><input type="checkbox" id="pfVip"' + (d.vip ? ' checked' : '') + '/> ⭐ <b>Invited to the VIP reception</b> <span class="muted">(before the banquet, no seating)</span></label>' +
-    '<span id="pfVipN"' + (d.vip ? '' : ' hidden') + '> · admits <input id="pfVipCount" type="number" min="1" value="' + (d.vipCount || d.seats || 1) + '" style="width:70px"/> <span class="muted">of the party</span></span></div>' +
+    '<span id="pfVipN"' + (d.vip ? '' : ' hidden') + '> · <b>VIP tickets</b> <input id="pfVipCount" type="number" min="1" value="' + (d.vipCount || d.seats || 1) + '" style="width:70px"/> <span class="muted">(can differ from seats)</span></span></div>' +
     '<div class="field"><label>Guest names <span class="muted">(optional, one per line)</span> <span id="pfNamed" class="muted"></span></label><textarea id="pfGuests" rows="3" placeholder="Leave blank if you only know the count">' + BQ.esc((d.guests || []).join('\n')) + '</textarea></div>' +
     '<div class="field"><label>Special requests</label><div id="pfNeeds"></div>' +
     '<div class="needadd">' + Object.keys(BQ.NEEDS).map(k => '<button data-k="' + k + '" title="' + BQ.esc(BQ.NEEDS[k].hint || '') + '">' + BQ.NEEDS[k].icon + ' ' + BQ.esc(BQ.NEEDS[k].label) + '</button>').join('') + '</div></div>' +
-    '<div class="field two"' + (BQ.config.trackPayment ? '' : ' hidden') + '><div><label>Payment</label><select id="pfPay"><option value="">Not set</option>' + BQ.PAY.map(v => '<option' + (d.pay === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></div>' +
-    '<div><label>Payment note</label><input id="pfPayNote" value="' + BQ.esc(d.payNote) + '" placeholder="e.g. check #1042, $50/seat"/></div></div>' +
+    (!BQ.config.trackPayment ? '' : '<div class="field two"><div><label>Payment</label><select id="pfPay"><option value="">Not set</option>' + BQ.PAY.map(v => '<option' + (d.pay === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></div>' +
+    '<div><label>Payment note</label><input id="pfPayNote" value="' + BQ.esc(d.payNote) + '" placeholder="e.g. check #1042, $50/seat"/></div></div>') +
     '<div class="field two"><div><label>Phone</label><input id="pfPhone" value="' + BQ.esc(d.phone) + '"/></div><div><label>Email</label><input id="pfEmail" value="' + BQ.esc(d.email) + '"/></div></div>' +
     '<div class="field"><label>Notes</label><textarea id="pfNotes" rows="2">' + BQ.esc(d.notes) + '</textarea></div>' +
     '</div>';
@@ -308,7 +316,7 @@ BQ.ui.openParty = function (p, defaults) {
       table: $('#pfTable').value,
       pinned: $('#pfPin').checked,
       guests: $('#pfGuests').value.split(/\n/).map(x => x.trim()).filter(Boolean),
-      pay: $('#pfPay').value, payNote: $('#pfPayNote').value.trim(),
+      pay: $('#pfPay') ? $('#pfPay').value : d.pay, payNote: $('#pfPayNote') ? $('#pfPayNote').value.trim() : d.payNote,
       phone: $('#pfPhone').value.trim(), email: $('#pfEmail').value.trim(), notes: $('#pfNotes').value.trim(),
       vip: $('#pfVip').checked
     });
@@ -407,18 +415,18 @@ BQ.screens.guests = {
   title: 'Guest List',
   render(main) {
     const V = BQ.guestView;
-    const filters = [['all', 'Everyone'], ['waiting', 'Waiting for a seat'], ['seated', 'Seated'], ['needs', 'Has requests'], ['problems', 'Request not met'], ['unpaid', 'Not paid'], ['orgs', 'Units & orgs'], ['vip', '⭐ VIP reception']]
+    const filters = [['all', 'Everyone'], ['waiting', 'Waiting for a seat'], ['seated', 'Seated'], ['needs', 'Has requests'], ['problems', 'Request not met'], ['unpaid', 'Not paid'], ['orgs', 'Units & orgs'], ['vip', '⭐ VIP reception'], ['awards', '🏆 Award recipients']].concat(BQ.lastImport ? [['new', '🆕 Just imported']] : [])
       .filter(f => f[0] !== 'unpaid' || BQ.config.trackPayment);
     main.innerHTML = '<div class="page wide">' +
       '<div class="page-head"><h1>Guest List</h1><span class="grow"></span>' +
       '<button class="btn" id="glPaste">📋 Paste a list…</button><button class="btn primary" id="glAdd">＋ Add guest or group</button></div>' +
       '<div class="toolbar"><input id="glQ" type="search" placeholder="Search names, units, notes…" value="' + BQ.esc(V.q) + '"/>' +
       '<div class="chips">' + filters.map(f => '<button data-f="' + f[0] + '" class="' + (V.filter === f[0] ? 'on' : '') + '">' + f[1] + '</button>').join('') + '</div></div>' +
-      '<div id="glTable"></div></div>';
+      '<div id="glBulk"></div><div id="glTable"></div></div>';
     main.querySelector('#glAdd').onclick = () => BQ.ui.openParty(null);
     main.querySelector('#glPaste').onclick = () => BQ.imports.pasteDialog();
     main.querySelector('#glQ').oninput = e => { V.q = e.target.value; this.drawTable(); };
-    main.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { V.filter = b.dataset.f; main.querySelectorAll('[data-f]').forEach(x => x.classList.toggle('on', x === b)); this.drawTable(); });
+    main.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { V.filter = b.dataset.f; V.sel && V.sel.clear(); main.querySelectorAll('[data-f]').forEach(x => x.classList.toggle('on', x === b)); this.drawTable(); });
     this.drawTable();
   },
   refresh() { this.drawTable(); },
@@ -436,6 +444,8 @@ BQ.screens.guests = {
         case 'unpaid': return BQ.payClass(p.pay) !== 'ok';
         case 'orgs': return BQ.isOrg(p);
         case 'vip': return !!p.vip;
+        case 'awards': return BQ.recipientPartyIds().has(p.id);
+        case 'new': return !!BQ.lastImport && BQ.lastImport.ids.includes(p.id);
       }
       return true;
     });
@@ -445,14 +455,18 @@ BQ.screens.guests = {
     }[V.sort];
     rows.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * V.dir; });
     const seats = rows.reduce((s, p) => s + p.seats, 0);
+    V.sel = V.sel || new Set();
+    Array.from(V.sel).forEach(id => { if (!BQ.partyById(id)) V.sel.delete(id); });
+    V.shown = rows.map(p => p.id);
+    const allOn = rows.length > 0 && rows.every(p => V.sel.has(p.id));
     const th = (k, l, c) => '<th data-k="' + k + '" class="' + (c || '') + (V.sort === k ? ' sorted' : '') + '">' + l + (V.sort === k ? (V.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
     box.innerHTML = '<div class="muted small">' + rows.length + ' of ' + BQ.state.parties.length + ' parties · ' + seats + ' seats</div>' +
-      '<div class="tablewrap"><table class="grid hover"><thead><tr>' + th('name', 'Name') + th('type', 'Type') + th('aff', 'Unit / org') + th('seats', 'Seats', 'c') + th('table', 'Table', 'c') +
+      '<div class="tablewrap"><table class="grid hover"><thead><tr><th class="c"><input type="checkbox" id="glAll" title="Select everyone shown"' + (allOn ? ' checked' : '') + '/></th>' + th('name', 'Name') + th('type', 'Type') + th('aff', 'Unit / org') + th('seats', 'Seats', 'c') + th('table', 'Table', 'c') +
       '<th>Requests</th>' + (BQ.config.trackPayment ? th('pay', 'Payment') : '') + th('checkin', 'Here', 'c') + '</tr></thead><tbody>' +
       rows.map(p => {
         const ti = BQ.typeInfo(p.type);
         const needs = (p.needs || []).map(n => { const r = BQ.checkNeed(p, n); return '<span class="need n-' + r.state + '" title="' + BQ.esc(BQ.needText(n) + ' — ' + r.msg) + '">' + (BQ.NEEDS[n.type] || {}).icon + '</span>'; }).join('');
-        return '<tr data-pid="' + p.id + '"><td><b>' + BQ.esc(p.name) + '</b>' + (p.vip ? ' <span class="vipchip" title="VIP reception: admits ' + BQ.vipCount(p) + '">⭐ VIP ' + BQ.vipCount(p) + '</span>' : '') + (p.pinned ? ' 📌' : '') + (p.group ? ' <span class="muted" title="Split party">⛓</span>' : '') +
+        return '<tr data-pid="' + p.id + '"' + (V.sel.has(p.id) ? ' class="picked"' : '') + '><td class="c"><input type="checkbox" data-sel' + (V.sel.has(p.id) ? ' checked' : '') + '/></td><td><b>' + BQ.esc(p.name) + '</b>' + (p.vip ? ' <span class="vipchip" title="VIP reception tickets">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + '</span>' : '') + (p.pinned ? ' 📌' : '') + (p.group ? ' <span class="muted" title="Split party">⛓</span>' : '') +
           ((p.guests || []).length ? '<div class="muted small">' + BQ.esc(p.guests.join(', ')) + '</div>' : '') + '</td>' +
           '<td>' + ti.icon + ' ' + BQ.esc(ti.label) + '</td><td>' + BQ.esc(p.aff) + '</td><td class="c">' + p.seats + '</td>' +
           '<td class="c">' + (p.table ? '<b>' + BQ.esc(p.table) + '</b>' : '<button class="btn sm" data-find="' + p.id + '">Find a seat</button>') + '</td>' +
@@ -460,12 +474,111 @@ BQ.screens.guests = {
           '<td class="c">' + (p.checkedIn ? Math.min(p.checkedIn, p.seats) + '/' + p.seats : '') + '</td></tr>';
       }).join('') + '</tbody></table></div>' + (rows.length ? '' : '<p class="muted pad">No guests match.</p>');
     box.querySelectorAll('th[data-k]').forEach(h => h.onclick = () => { if (V.sort === h.dataset.k) V.dir *= -1; else { V.sort = h.dataset.k; V.dir = 1; } this.drawTable(); });
+    box.querySelector('#glAll') && (box.querySelector('#glAll').onchange = e => { rows.forEach(p => { if (e.target.checked) V.sel.add(p.id); else V.sel.delete(p.id); }); this.drawTable(); });
     box.querySelectorAll('tr[data-pid]').forEach(tr => tr.onclick = ev => {
       const pid = Number(tr.dataset.pid);
+      if (ev.target.matches('[data-sel]') || ev.target.querySelector && ev.target.querySelector('[data-sel]')) {
+        const cb = tr.querySelector('[data-sel]');
+        if (!ev.target.matches('[data-sel]')) cb.checked = !cb.checked;
+        if (cb.checked) V.sel.add(pid); else V.sel.delete(pid);
+        tr.classList.toggle('picked', cb.checked);
+        this.drawBulk();
+        return;
+      }
       if (ev.target.dataset.find) { BQ.seatView.panel = { type: 'party', id: pid }; BQ.ui.go('seat'); return; }
       BQ.ui.openParty(BQ.partyById(pid));
     });
+    this.drawBulk();
+  },
+  drawBulk() {
+    const V = BQ.guestView, bar = document.getElementById('glBulk');
+    if (!bar) return;
+    const n = V.sel.size, shown = (V.shown || []).length;
+    const hidden = Array.from(V.sel).filter(id => !(V.shown || []).includes(id)).length;
+    bar.innerHTML = '<div class="selbar">' + (n ? '<b>' + n + ' selected</b>' + (hidden ? ' <span class="warn small">(' + hidden + ' not shown by the current search)</span>' : '') : '<span class="muted">Tick guests to change several at once.</span>') +
+      (shown && shown !== n ? '<button class="btn sm" id="gbAll">Select all ' + shown + ' shown</button>' : '') +
+      (n ? '<button class="btn sm primary" id="gbEdit">✏️ Change selected…</button><button class="btn sm ghost" id="gbClear">Clear</button>' : '') + '</div>';
+    const a = bar.querySelector('#gbAll'); if (a) a.onclick = () => { (V.shown || []).forEach(id => V.sel.add(id)); this.drawTable(); };
+    const e = bar.querySelector('#gbEdit'); if (e) e.onclick = () => BQ.bulkEditDialog(Array.from(V.sel));
+    const c = bar.querySelector('#gbClear'); if (c) c.onclick = () => { V.sel.clear(); this.drawTable(); };
   }
+};
+
+/* Guests who are linked to an award recipient */
+BQ.recipientPartyIds = function () {
+  const ids = new Set();
+  BQ.state.awards.forEach(a => (a.recipients || []).forEach(r => { if (r.pid && BQ.partyById(r.pid)) ids.add(r.pid); }));
+  return ids;
+};
+
+/* ---------------------------------------------------------------------
+   BULK EDIT — change many guests at once (one Undo reverses it)
+   --------------------------------------------------------------------- */
+BQ.bulkEditDialog = function (ids, note) {
+  const ps = ids.map(BQ.partyById).filter(Boolean);
+  if (!ps.length) { BQ.ui.toast('Nobody selected.'); return; }
+  const seats = ps.reduce((s, p) => s + p.seats, 0);
+  const simpleNeeds = Object.keys(BQ.NEEDS).filter(k => !BQ.NEEDS[k].target || BQ.NEEDS[k].target === 'zone' || BQ.NEEDS[k].target === 'text');
+  const zones = BQ.settings().zones || [];
+  const affs = Array.from(new Set(BQ.state.parties.map(x => x.aff).filter(Boolean))).sort();
+  const sec = (title, inner, btn, id, cls) => '<div class="bulkrow"><div class="br-t"><b>' + title + '</b><div class="br-in">' + inner + '</div></div><button class="btn ' + (cls || 'primary') + ' sm" id="' + id + '">' + btn + '</button></div>';
+  const body = (note ? '<p class="warn small">' + note + '</p>' : '') +
+    '<p><b>' + ps.length + '</b> guests / groups selected (' + seats + ' seats): <span class="muted small">' + ps.slice(0, 8).map(p => BQ.esc(p.name)).join(', ') + (ps.length > 8 ? '…' : '') + '</span></p>' +
+    sec('🍽️ Seats', 'Set each to <input id="bkSeats" type="number" min="1" value="2" style="width:80px"/> seats', 'Set seats', 'bkSeatsSet') +
+    sec('⭐ VIP reception tickets', 'Give each <select id="bkVipMode"><option value="n">this many:</option><option value="same">the same as their seats</option></select> <input id="bkVipN" type="number" min="1" value="2" style="width:80px"/>', 'Set VIP tickets', 'bkVipOn') +
+    sec('⭐ VIP reception: remove invitation', '', 'Remove', 'bkVipOff', '') +
+    sec('Add a special request', '<select id="bkNeed">' + simpleNeeds.map(k => '<option value="' + k + '">' + BQ.NEEDS[k].icon + ' ' + BQ.esc(BQ.NEEDS[k].label) + '</option>').join('') + '</select>' +
+      ' <select id="bkZone" hidden>' + zones.map(z => '<option>' + BQ.esc(z.name) + '</option>').join('') + '</select><input id="bkNote" placeholder="Describe the request" hidden/>', 'Add', 'bkNeedAdd') +
+    sec('Remove a special request', '<select id="bkNeedRm">' + Object.keys(BQ.NEEDS).map(k => '<option value="' + k + '">' + BQ.NEEDS[k].icon + ' ' + BQ.esc(BQ.NEEDS[k].label) + '</option>').join('') + '</select>', 'Remove', 'bkNeedDel', '') +
+    sec('Guest type', '<select id="bkType">' + BQ.PARTY_TYPES.map(t => '<option value="' + t.k + '">' + t.icon + ' ' + BQ.esc(t.label) + '</option>').join('') + '</select>', 'Set', 'bkTypeSet') +
+    sec('Unit / organization', '<input id="bkAff" list="bkAffs" placeholder="Leave blank to clear"/><datalist id="bkAffs">' + affs.map(a => '<option value="' + BQ.esc(a) + '">').join('') + '</datalist>', 'Set', 'bkAffSet') +
+    sec('📌 Lock at their tables / unlock', '', 'Lock', 'bkPin', '') .replace('</button></div>', '</button><button class="btn sm" id="bkUnpin">Unlock</button></div>') +
+    sec('Take them off their tables (back to the waiting list)', '', 'Take off tables', 'bkUnseat', '') +
+    sec('Delete these guests', '', 'Delete…', 'bkDel', 'danger');
+  const m = BQ.ui.modal({ title: '✏️ Change ' + ps.length + ' guests at once', body, wide: true, buttons: [{ label: 'Close' }] });
+  const $ = s => m.el.querySelector(s);
+  const run = async (label, mutate, filter) => {
+    const ch = ps.filter(p => !filter || filter(p)).map(p => BQ.partyChange(p, mutate)).filter(c => JSON.stringify(c.before) !== JSON.stringify(c.after));
+    if (!ch.length) { BQ.ui.toast('Nothing to change. They already have that.'); return; }
+    m.close();
+    const ok = await BQ.commit(label + ' (' + BQ.plural(ch.length, 'guest') + ')', ch);
+    if (ok && BQ.guestView.sel) { BQ.guestView.sel.clear(); BQ.ui.changed(); }
+    if (ok) BQ.ui.toast(label + ': ' + BQ.plural(ch.length, 'guest') + ' updated. Undo reverses it.', 'ok');
+  };
+  $('#bkNeed').onchange = () => { $('#bkZone').hidden = $('#bkNeed').value !== 'zone'; $('#bkNote').hidden = $('#bkNeed').value !== 'note'; };
+  $('#bkVipMode').onchange = () => { $('#bkVipN').hidden = $('#bkVipMode').value !== 'n'; };
+  $('#bkVipOn').onclick = () => {
+    const same = $('#bkVipMode').value === 'same';
+    const n = Math.max(1, parseInt($('#bkVipN').value, 10) || 1);
+    run('VIP tickets → ' + (same ? 'same as seats' : n), a => { a.vip = true; a.vipCount = same ? a.seats : n; });
+  };
+  $('#bkSeatsSet').onclick = () => {
+    const n = Math.max(1, parseInt($('#bkSeats').value, 10) || 1);
+    run('Seats → ' + n, a => { a.seats = n; });
+  };
+  $('#bkVipOff').onclick = () => run('Removed VIP reception', a => { a.vip = false; a.vipCount = 0; a.vipIn = 0; });
+  $('#bkNeedAdd').onclick = () => {
+    const k = $('#bkNeed').value;
+    const need = { type: k, target: k === 'zone' ? $('#bkZone').value : '' };
+    if (k === 'zone' && !need.target) { BQ.ui.toast('Create an area first (Requests & Rules).', 'bad'); return; }
+    if (k === 'note') { need.text = $('#bkNote').value.trim(); if (!need.text) { BQ.ui.toast('Describe the request.', 'bad'); return; } }
+    run('Added request “' + BQ.NEEDS[k].label + '”', a => {
+      a.needs = a.needs || [];
+      if (!a.needs.some(n => n.type === k && (n.target || '') === (need.target || '') && (n.text || '') === (need.text || ''))) a.needs.push(Object.assign({}, need));
+    });
+  };
+  $('#bkNeedDel').onclick = () => { const k = $('#bkNeedRm').value; run('Removed request “' + BQ.NEEDS[k].label + '”', a => { a.needs = (a.needs || []).filter(n => n.type !== k); }); };
+  $('#bkTypeSet').onclick = () => { const v = $('#bkType').value; run('Guest type → ' + BQ.typeInfo(v).label, a => { a.type = v; }); };
+  $('#bkAffSet').onclick = () => { const v = $('#bkAff').value.trim(); run('Unit / org → ' + (v || '(blank)'), a => { a.aff = v; }); };
+  $('#bkPin').onclick = () => run('Locked at tables', a => { a.pinned = true; }, p => !!p.table);
+  $('#bkUnpin').onclick = () => run('Unlocked', a => { a.pinned = false; });
+  $('#bkUnseat').onclick = () => run('Took off tables', a => { a.table = ''; a.pinned = false; }, p => !!p.table);
+  $('#bkDel').onclick = async () => {
+    if (!(await BQ.ui.confirm('Delete ' + BQ.plural(ps.length, 'guest') + ' (' + seats + ' seats)? Undo can bring them back.', 'Delete'))) return;
+    m.close();
+    BQ.guestView.sel && BQ.guestView.sel.clear();
+    BQ.commit('Deleted ' + BQ.plural(ps.length, 'guest'), ps.map(p => ({ kind: 'party', before: BQ.clone(p), after: null })));
+  };
 };
 
 /* ---------------------------------------------------------------------
@@ -650,11 +763,13 @@ BQ.screens.checkin = {
     box.innerHTML = blocks.map(b => '<div class="ci block"><div class="ci-who"><b>' + BQ.esc(b.label) + '</b><div class="muted small">Reserved tables · ' + b.seats + ' seats</div></div>' +
       '<div class="ci-table" style="grid-column: span 3; text-align:left"><small>TABLES</small><b>' + BQ.esc(b.tables.join(', ')) + '</b></div></div>').join('') + shown.map(x => {
       const p = x.party, h = here(p), t = total(p), done = h >= t;
-      const vipNote = !vipMode && p.vip ? ' · <span class="vipchip">⭐ VIP</span>' : '';
+      // both numbers, always: seats for the banquet, tickets for the VIP reception
+      const vipNote = '<div class="ci-nums"><span class="numchip">🍽️ ' + BQ.plural(p.seats, 'seat') + '</span>' +
+        (p.vip ? '<span class="vipchip">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + (vipMode ? '' : ' · ' + Math.min(p.vipIn || 0, BQ.vipCount(p)) + ' in') + '</span>' : '<span class="muted small">no VIP reception</span>') + '</div>';
       return '<div class="ci' + (done ? ' done' : '') + '"><div class="ci-who"><b>' + BQ.esc(x.name) + '</b>' +
-        '<div class="muted small">' + (x.leader ? (BQ.isOrg(p) ? BQ.esc(BQ.typeInfo(p.type).label) : 'Party of ' + p.seats) : 'with ' + BQ.esc(p.name)) + (p.aff ? ' · ' + BQ.esc(p.aff) : '') + vipNote +
-        (BQ.config.trackPayment && p.pay && BQ.payClass(p.pay) !== 'ok' ? ' · <span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '') + '</div></div>' +
-        '<div class="ci-table">' + (vipMode ? '<small>ADMITS</small><b>' + t + '</b>' : p.table ? '<small>TABLE</small><b>' + BQ.esc(p.table) + '</b>' : '<small>no table</small>') + '</div>' +
+        '<div class="muted small">' + (x.leader ? (BQ.isOrg(p) ? BQ.esc(BQ.typeInfo(p.type).label) : 'Party of ' + p.seats) : 'with ' + BQ.esc(p.name)) + (p.aff ? ' · ' + BQ.esc(p.aff) : '') +
+        (BQ.config.trackPayment && p.pay && BQ.payClass(p.pay) !== 'ok' ? ' · <span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '') + '</div>' + vipNote + '</div>' +
+        '<div class="ci-table">' + (vipMode ? '<small>VIP TICKETS</small><b>' + t + '</b>' : p.table ? '<small>TABLE</small><b>' + BQ.esc(p.table) + '</b>' : '<small>no table</small>') + '</div>' +
         '<div class="ci-count">' + h + ' / ' + t + '<small>here</small></div>' +
         '<div class="ci-btns">' + (done ? '<button class="btn sm" data-reset="' + p.id + '">Undo</button>' :
         '<button class="btn primary" data-all="' + p.id + '">✓ ' + (t - h > 1 ? 'All ' + (t - h) + ' here' : 'Here') + '</button>' +
@@ -996,3 +1111,17 @@ BQ.boot = async function () {
 };
 
 document.addEventListener('DOMContentLoaded', () => BQ.boot());
+
+/* After any import: remember who came in, and offer to open just them for bulk changes */
+BQ.noteImport = function (ids, label) {
+  ids = (ids || []).filter(Boolean);
+  if (!ids.length) return;
+  BQ.lastImport = { ids, label };
+  BQ.ui.toast(label + ' ✓', 'ok', { label: 'Review & change these', onClick: () => BQ.reviewImport() });
+};
+BQ.reviewImport = function () {
+  if (!BQ.lastImport) return;
+  BQ.guestView.filter = 'new'; BQ.guestView.q = '';
+  BQ.guestView.sel = new Set(BQ.lastImport.ids.filter(id => BQ.partyById(id)));
+  BQ.ui.go('guests');
+};
