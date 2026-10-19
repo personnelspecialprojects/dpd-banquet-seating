@@ -73,6 +73,19 @@ BQ.auth = {
   graphToken() { return this.token(['User.Read']); },
   spToken() { return this.token([new URL(BQ.config.siteUrl).origin + '/AllSites.Write']); },
 
+  // Higher SharePoint permission, requested ONLY for the one-time "create lists & columns" step.
+  // Needs AllSites.Manage (delegated) added to the PatrolBidPortal registration. Uses a popup so
+  // the page isn't lost; if it can't be granted, setup shows what to create by hand instead.
+  async spManageToken() {
+    const scopes = [new URL(BQ.config.siteUrl).origin + '/AllSites.Manage'];
+    try {
+      return (await this.msal.acquireTokenSilent({ scopes, account: this.account })).accessToken;
+    } catch (e) {
+      const r = await this.msal.acquireTokenPopup({ scopes, account: this.account });
+      return r.accessToken;
+    }
+  },
+
   async loadUser() {
     try {
       const t = await this.graphToken();
@@ -96,7 +109,7 @@ BQ.auth = {
 BQ.sp = {
   async req(path, opts) {
     opts = opts || {};
-    const token = await BQ.auth.spToken();
+    const token = opts.manage ? await BQ.auth.spManageToken() : await BQ.auth.spToken();
     const url = /^https?:/.test(path) ? path : BQ.config.siteUrl + path;
     const headers = Object.assign({
       Authorization: 'Bearer ' + token,

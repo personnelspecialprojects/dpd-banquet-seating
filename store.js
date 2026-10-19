@@ -209,7 +209,7 @@ BQ.SPStore = {
       if (!row.exists) {
         progress('Creating list ' + row.list + '…');
         await BQ.sp.req('/_api/web/lists', {
-          method: 'POST',
+          method: 'POST', manage: true,
           body: { __metadata: { type: 'SP.List' }, BaseTemplate: 100, Title: row.list, Description: 'Banquet Seating app data — do not rename' }
         });
       }
@@ -217,7 +217,7 @@ BQ.SPStore = {
         const type = BQ.schema[row.list].find(f => f[0] === name)[1];
         progress('Adding column ' + row.list + ' → ' + name + '…');
         await BQ.sp.req(this.L(row.list) + '/fields/createfieldasxml', {
-          method: 'POST',
+          method: 'POST', manage: true,
           body: { parameters: { __metadata: { type: 'SP.XmlSchemaFieldCreationInformation' }, SchemaXml: BQ.fieldXml(name, type), Options: 8 | 16 } }
         });
       }

@@ -777,6 +777,24 @@ BQ.renderShellTitle = function () {
 };
 
 /* SharePoint health check + one-click setup */
+/* What to create by hand: only the lists/columns that are missing, with SharePoint column types */
+BQ.manualSpec = function (rep) {
+  const T = {
+    Text: 'Single line of text',
+    Note: 'Multiple lines of text, <b>Plain text</b>',
+    Number: 'Number',
+    DateTime: 'Date and time, <b>Include time: Yes</b>',
+    Boolean: 'Yes/No (default No)'
+  };
+  const rows = (rep || []).filter(r => !r.exists || r.missing.length);
+  if (!rows.length) return '<p class="ok">Nothing is missing.</p>';
+  return '<div class="manual-spec"><p class="small muted">Type each column name exactly as shown (no spaces, same capitals) when you first create it. Leave every column not required. Keep the built-in Title column.</p>' +
+    rows.map(r => '<h4>' + (r.exists ? 'Add to list ' : 'Create list ') + '<code>' + r.list + '</code>' + (r.exists ? '' : ' (blank list)') + '</h4>' +
+      '<table class="grid"><thead><tr><th>Column name</th><th>Type</th></tr></thead><tbody>' +
+      r.missing.map(n => { const t = (BQ.schema[r.list].find(f => f[0] === n) || [])[1]; return '<tr><td><code>' + n + '</code></td><td>' + (T[t] || t) + '</td></tr>'; }).join('') +
+      '</tbody></table>').join('') + '</div>';
+};
+
 BQ.setupPanel = async function (box, onReady) {
   box.innerHTML = '<p class="muted">Checking SharePoint…</p>';
   let rep;
@@ -794,8 +812,26 @@ BQ.setupPanel = async function (box, onReady) {
       await BQ.SPStore.provision(msg => { box.querySelector('#spProg').textContent = msg; });
       BQ.logAction('SharePoint setup', 'Created missing lists/columns');
       return BQ.setupPanel(box, onReady);
-    } catch (e) { box.querySelector('#spProg').innerHTML = '<span class="bad">' + BQ.esc(e.message) + '</span>'; fix.disabled = false; }
+    } catch (e) {
+      console.error(e);
+      const denied = e.status === 403 || /consent|AADSTS|popup|interaction|access is denied/i.test(String(e.message || e.errorCode || ''));
+      box.querySelector('#spProg').innerHTML = denied
+        ? '<p class="bad">Your sign-in isn’t allowed to create lists or columns (' + BQ.esc(e.message || e.errorCode || 'access denied') + ').</p>' +
+          '<p>Two ways to fix it:</p><ol><li><b>Create them by hand</b> in SharePoint using the list below, then press <b>Check again</b>.</li>' +
+          '<li>Or add the <b>SharePoint → Delegated → AllSites.Manage</b> permission to the PatrolBidPortal app registration (it may need admin consent), then press <b>Create missing lists &amp; columns</b> again.</li></ol>' +
+          BQ.manualSpec(await BQ.SPStore.health().catch(() => rep)) + '<button class="btn" id="spRecheck">Check again</button>'
+        : '<span class="bad">' + BQ.esc(e.message) + '</span>';
+      const rc = box.querySelector('#spRecheck');
+      if (rc) rc.onclick = () => BQ.setupPanel(box, onReady);
+      fix.disabled = false;
+    }
   };
+  if (!ok) {
+    const det = document.createElement('details');
+    det.innerHTML = '<summary>Prefer to create them by hand? Show exactly what’s missing</summary>' + BQ.manualSpec(rep) + '<button class="btn" id="spRecheck2">Check again</button>';
+    box.appendChild(det);
+    det.querySelector('#spRecheck2').onclick = () => BQ.setupPanel(box, onReady);
+  }
   const go = box.querySelector('#spGo');
   if (go) go.onclick = onReady;
   return ok;
