@@ -447,6 +447,9 @@ IM.honorsPreview = function (res, source) {
         const opts = addEl && addEl.checked ? { seats: Number(m.el.querySelector('#hpSeats .on').dataset.v), nearUnit: m.el.querySelector('#hpUnit').checked, front: m.el.querySelector('#hpFront').checked, together: false } : null;
         const since = BQ.history.length;
         const changes = replaceThese.map(a => ({ kind: 'award', before: BQ.clone(a), after: null }));
+        // keep the Segments panel order in step (only matters once an order has been set there)
+        const segOrder = BQ.segmentOrder();
+        if (segOrder.length && !segOrder.includes(seg)) changes.push(BQ.eventChange(e => { e.settings = Object.assign({}, BQ.DEFAULT_SETTINGS, e.settings, { segments: atStart ? [seg].concat(segOrder) : segOrder.concat([seg]) }); }));
         let order = 0;
         const newOnes = awards.map(a => ({ name: a.name, logNo: '', segment: seg, cat: '', kind: a.recipients.length > 1 ? 'Group' : 'Individual', presenter: '', notes: '', status: '', recipients: a.recipients }));
         const sequence = atStart ? newOnes.concat(keep) : keep.concat(newOnes);

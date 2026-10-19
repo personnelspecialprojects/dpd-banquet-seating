@@ -8,10 +8,19 @@
 window.BQ = window.BQ || {};
 BQ.screens = BQ.screens || {};
 
-BQ.awardsSorted = () => BQ.state.awards.slice().sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id);
+// Segment order comes from Settings (Segments panel) when set; otherwise from the awards' own order.
+BQ.segmentOrder = () => (BQ.settings().segments || []).slice();
+BQ.awardsSorted = function () {
+  const list = BQ.state.awards.slice().sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id);
+  const named = BQ.segmentOrder();
+  const first = {};
+  list.forEach((a, i) => { const s = a.segment || ''; if (!(s in first)) first[s] = i; });
+  const rank = s => { const i = named.indexOf(s); return i >= 0 ? i : 10000 + (first[s] || 0); };
+  return list.sort((a, b) => rank(a.segment || '') - rank(b.segment || '') || (a.order || 0) - (b.order || 0) || a.id - b.id);
+};
 
 BQ.segments = function () {
-  const segs = [];
+  const segs = BQ.segmentOrder().map(name => ({ name, awards: [] }));
   BQ.awardsSorted().forEach(a => {
     const s = a.segment || '';
     let g = segs.find(x => x.name === s);
@@ -60,10 +69,11 @@ BQ.screens.awards = {
     main.innerHTML = '<div class="page wide">' +
       '<div class="page-head"><h1>Awards</h1><span class="muted" id="awCount"></span><span class="grow"></span>' +
       '<button class="btn" id="awImport">📥 Import awards…</button>' +
+      '<button class="btn" id="awSegs">🗂 Segments…</button>' +
       '<button class="btn" id="awMap">★ Recipients on map</button>' +
       '<button class="btn" id="awPrint">🖨 Print lineup</button>' +
       '<button class="btn primary" id="awAdd">＋ Add award</button></div>' +
-      '<div id="awAlert"></div>' +
+      '<div id="awAlert"></div><div id="awSelBar"></div>' +
       '<div class="toolbar"><input id="awQ" type="search" placeholder="Find a recipient, badge, or Log Number…" value="' + BQ.esc(BQ.awardView.q) + '"/></div>' +
       '<div class="aw-cols"><div class="aw-prog" id="awProg"></div><div class="aw-route card" id="awRoute"></div></div></div>';
     main.querySelector('#awAdd').onclick = () => BQ.awardDialog(null);
@@ -76,6 +86,7 @@ BQ.screens.awards = {
       if (v === 'docx') BQ.imports.honorsDialog();
     };
     main.querySelector('#awPrint').onclick = () => BQ.exports.printLineup();
+    main.querySelector('#awSegs').onclick = () => BQ.segmentsDialog();
     main.querySelector('#awMap').onclick = () => { BQ.seatView.showAwards = true; BQ.ui.go('seat'); };
     main.querySelector('#awQ').oninput = e => { BQ.awardView.q = e.target.value; this.draw(); };
     this.draw();
@@ -100,8 +111,10 @@ BQ.screens.awards = {
     }
     const q = BQ.awardView.q.toLowerCase().trim();
     const match = a => !q || (BQ.awardTitle(a) + ' ' + a.segment + ' ' + (a.recipients || []).map(r => r.name + ' ' + (r.badge || '')).join(' ')).toLowerCase().indexOf(q) >= 0;
+    BQ.awardView.sel = BQ.awardView.sel || new Set();
     box.innerHTML = BQ.segments().map(sg => {
       const list = sg.awards.filter(match);
+      if (!sg.awards.length && !q) return '<div class="aw-seg"><h2>' + BQ.esc(sg.name || 'Program') + ' <span class="count">0</span></h2><p class="muted small">Empty segment. Tick awards and use “Move to”, or set this segment in an award’s details.</p></div>';
       if (!list.length) return '';
       return '<div class="aw-seg"><h2>' + BQ.esc(sg.name || 'Program') + ' <span class="count">' + sg.awards.length + '</span></h2>' +
         list.map(a => {
@@ -112,9 +125,9 @@ BQ.screens.awards = {
               (r.count > 1 ? ' ×' + r.count : '') + ' <b>' + BQ.esc(s.table ? 'T' + s.table : s.state === 'wait' ? 'no table' : '⚠') + '</b></span>';
           }).join('');
           const st = a.status || '';
-          return '<div class="award st-' + (st || 'none').replace(/\s/g, '') + '" data-aid="' + a.id + '"><div class="a-num">' + num + '</div><div class="a-main">' +
+          return '<div class="award st-' + (st || 'none').replace(/\s/g, '') + (BQ.awardView.sel.has(a.id) ? ' picked' : '') + '" data-aid="' + a.id + '"><input type="checkbox" class="a-sel" data-sel title="Tick to move several awards at once"' + (BQ.awardView.sel.has(a.id) ? ' checked' : '') + '/><div class="a-num">' + num + '</div><div class="a-main">' +
             '<div class="a-top">' + (a.logNo ? '<span class="logno">' + BQ.esc(a.logNo) + '</span> ' : '') + '<b>' + BQ.esc(a.name) + '</b>' + (a.cat ? '<span class="muted"> · ' + BQ.esc(a.cat) + '</span>' : '') +
-            '<span class="kind">' + (a.kind === 'Group' ? '👥 ' + (a.recipients || []).length + ' people' : '👤 Individual') + '</span></div>' +
+            '<span class="kind">' + (a.kind === 'Group' ? '👥 ' + ((a.recipients || []).length === 1 ? '1 person' : (a.recipients || []).length + ' people') : '👤 Individual') + '</span></div>' +
             '<div class="recs">' + (recs || '<span class="muted small">No recipients yet</span>') + '</div>' +
             (a.presenter ? '<div class="muted small">Presented by ' + BQ.esc(a.presenter) + '</div>' : '') + (a.notes ? '<div class="muted small">📝 ' + BQ.esc(a.notes) + '</div>' : '') + '</div>' +
             '<div class="a-act"><div class="seg sm">' + ['', 'In line', 'Presented'].map(v => '<button data-st="' + v + '" class="' + (st === v ? 'on' : '') + '">' + (v || 'Not yet') + '</button>').join('') + '</div>' +
@@ -125,10 +138,38 @@ BQ.screens.awards = {
       const a = BQ.state.awards.find(x => x.id === Number(el.dataset.aid));
       el.querySelector('[data-edit]').onclick = () => BQ.awardDialog(a);
       el.querySelectorAll('[data-st]').forEach(b => b.onclick = () => BQ.commit(BQ.awardTitle(a) + ': ' + (b.dataset.st || 'Not yet'), [{ kind: 'award', before: BQ.clone(a), after: Object.assign(BQ.clone(a), { status: b.dataset.st }) }]));
+      el.querySelector('[data-sel]').onchange = e => { if (e.target.checked) BQ.awardView.sel.add(a.id); else BQ.awardView.sel.delete(a.id); el.classList.toggle('picked', e.target.checked); this.drawSelBar(); };
       el.querySelector('[data-up]').onclick = () => this.move(a, -1);
       el.querySelector('[data-down]').onclick = () => this.move(a, 1);
     });
+    this.drawSelBar();
     this.drawRoute();
+  },
+  drawSelBar() {
+    const bar = document.getElementById('awSelBar');
+    if (!bar) return;
+    const sel = BQ.awardView.sel;
+    Array.from(sel).forEach(id => { if (!BQ.state.awards.some(a => a.id === id)) sel.delete(id); });
+    if (!sel.size) { bar.innerHTML = ''; return; }
+    const names = BQ.segments().map(s => s.name);
+    bar.innerHTML = '<div class="selbar"><b>' + sel.size + ' selected</b> → Move to <select id="sbSeg">' + names.map(n => '<option value="' + BQ.esc(n) + '">' + BQ.esc(n || 'Program') + '</option>').join('') +
+      '<option value="__new">＋ New segment…</option></select><button class="btn primary sm" id="sbGo">Move</button><button class="btn sm ghost" id="sbClear">Clear</button></div>';
+    bar.querySelector('#sbClear').onclick = () => { sel.clear(); this.draw(); };
+    bar.querySelector('#sbGo').onclick = async () => {
+      let target = bar.querySelector('#sbSeg').value;
+      const ch = [];
+      if (target === '__new') {
+        target = await BQ.ui.prompt('Name the new segment', 'e.g. Part 2 – after dinner');
+        if (!target) return;
+        const order = BQ.segments().map(s => s.name);
+        if (!order.includes(target)) ch.push(BQ.eventChange(e => { e.settings = Object.assign({}, BQ.DEFAULT_SETTINGS, e.settings, { segments: order.concat([target]) }); }));
+      }
+      let mx = BQ.state.awards.reduce((m, a) => Math.max(m, a.order || 0), 0);
+      BQ.awardsSorted().filter(a => sel.has(a.id)).forEach(a => { ch.push({ kind: 'award', before: BQ.clone(a), after: Object.assign(BQ.clone(a), { segment: target, order: ++mx }) }); });
+      const n = sel.size;
+      sel.clear();
+      await BQ.commit('Moved ' + BQ.plural(n, 'award') + ' to ' + (target || 'Program'), ch);
+    };
   },
   move(a, dir) {
     const list = BQ.awardsSorted();
@@ -150,7 +191,7 @@ BQ.screens.awards = {
     const el = document.getElementById('awRoute');
     if (!el) return;
     el.innerHTML = '<h2>Escort pickup route</h2><p class="muted small">Recipients in walking order, row by row from the stage. Print it from <b>🖨 Print lineup</b>.</p>' +
-      BQ.segments().map(sg => {
+      BQ.segments().filter(sg => sg.awards.length).map(sg => {
         const stops = BQ.pickupRoute(sg.awards);
         return '<h3>' + BQ.esc(sg.name || 'Program') + '</h3><ol class="route">' + stops.map(s =>
           '<li class="r-' + s.seat.state + '"><b>' + BQ.esc(s.seat.table ? 'Table ' + s.seat.table : s.seat.text) + '</b> · ' + BQ.esc(BQ.recipLabel(s.r)) + (s.r.count > 1 ? ' ×' + s.r.count : '') +
@@ -233,7 +274,7 @@ BQ.awardDialog = function (a) {
   const all = BQ.awardsSorted();
   const d = isNew ? { name: '', cat: '', kind: 'Individual', logNo: '', segment: (all[all.length - 1] || {}).segment || '', presenter: '', recipients: [], notes: '', status: '', order: all.length ? Math.max.apply(null, all.map(x => x.order || 0)) + 1 : 1 } : BQ.clone(a);
   const cats = Array.from(new Set(BQ.state.awards.map(x => x.cat).filter(Boolean)));
-  const segs = Array.from(new Set(BQ.state.awards.map(x => x.segment).filter(Boolean)));
+  const segs = Array.from(new Set(BQ.segmentOrder().concat(BQ.state.awards.map(x => x.segment)).filter(Boolean)));
   const names = BQ.people();
   const partyOpts = '<option value="">— seated with… —</option>' + BQ.state.parties.slice().sort((x, y) => x.name.localeCompare(y.name)).map(p => '<option value="' + p.id + '">' + BQ.esc(p.name) + (p.table ? ' (T' + BQ.esc(p.table) + ')' : '') + '</option>').join('');
   const body =
@@ -304,4 +345,56 @@ BQ.awardDialog = function (a) {
     BQ.commit('Deleted award ' + BQ.awardTitle(a), [{ kind: 'award', before: BQ.clone(a), after: null }]);
   };
   setTimeout(() => $('#adName').focus(), 40);
+};
+
+/* ---------------------------------------------------------------------
+   Segments panel: add, rename, reorder, delete program segments
+   --------------------------------------------------------------------- */
+BQ.segmentsDialog = function () {
+  const m = BQ.ui.modal({ title: '🗂 Program segments', wide: true, body: '<div id="sgBody"></div>', buttons: [{ label: 'Done', cls: 'primary' }] });
+  const setOrder = (order, label, extra) => BQ.commit(label, [BQ.eventChange(e => { e.settings = Object.assign({}, BQ.DEFAULT_SETTINGS, e.settings, { segments: order }); })].concat(extra || []));
+  const draw = () => {
+    const segs = BQ.segments();
+    const order = segs.map(s => s.name);
+    m.el.querySelector('#sgBody').innerHTML =
+      '<p class="muted small">Segments are the parts of the program (e.g. “Life Saving Awards”, “Highest Honors”). Their order here is the order of the lineup.</p>' +
+      segs.map((s, i) => '<div class="segrow" data-i="' + i + '"><div class="row"><button class="btn sm ghost" data-up' + (i === 0 ? ' disabled' : '') + ' title="Earlier">▲</button><button class="btn sm ghost" data-down' + (i === segs.length - 1 ? ' disabled' : '') + ' title="Later">▼</button></div>' +
+        '<input data-name value="' + BQ.esc(s.name) + '" placeholder="Program (no segment)"/><span class="muted small">' + BQ.plural(s.awards.length, 'award') + '</span>' +
+        '<button class="x" data-del title="Delete segment">✕</button></div>').join('') +
+      '<div class="row gap" style="margin-top:10px"><input id="sgNew" placeholder="New segment name, e.g. Part 2 – after dinner"/><button class="btn" id="sgAdd">＋ Add segment</button></div>';
+    m.el.querySelectorAll('.segrow').forEach(row => {
+      const i = Number(row.dataset.i), s = segs[i];
+      row.querySelector('[data-up]').onclick = async () => { const o = order.slice(); [o[i - 1], o[i]] = [o[i], o[i - 1]]; await setOrder(o, 'Moved segment ' + (s.name || 'Program') + ' earlier'); draw(); };
+      row.querySelector('[data-down]').onclick = async () => { const o = order.slice(); [o[i + 1], o[i]] = [o[i], o[i + 1]]; await setOrder(o, 'Moved segment ' + (s.name || 'Program') + ' later'); draw(); };
+      row.querySelector('[data-name]').onchange = async e => {
+        const nv = e.target.value.trim();
+        if (nv === s.name) return;
+        if (order.includes(nv)) { BQ.ui.toast('There is already a segment called “' + nv + '”. To combine them, delete one and move its awards into the other.', 'bad'); draw(); return; }
+        const o = order.slice(); o[i] = nv;
+        await setOrder(o, 'Renamed segment ' + (s.name || 'Program') + ' → ' + (nv || 'Program'),
+          s.awards.map(a => ({ kind: 'award', before: BQ.clone(a), after: Object.assign(BQ.clone(a), { segment: nv }) })));
+        draw();
+      };
+      row.querySelector('[data-del]').onclick = async () => {
+        const o = order.filter((x, k) => k !== i);
+        if (!s.awards.length) { await setOrder(o, 'Deleted segment ' + (s.name || 'Program')); draw(); return; }
+        const target = await BQ.ui.choose('Delete “' + (s.name || 'Program') + '”', 'It has ' + BQ.plural(s.awards.length, 'award') + '. Move them to:',
+          o.map(n => ({ label: n || 'Program (no segment)', value: '§' + n })).concat([{ label: 'Cancel', value: null }]));
+        if (target == null) return;
+        const t = target.slice(1);
+        let mx = BQ.state.awards.filter(a => (a.segment || '') === t).reduce((mm, a) => Math.max(mm, a.order || 0), 0);
+        await setOrder(o, 'Deleted segment ' + (s.name || 'Program') + ' (awards moved to ' + (t || 'Program') + ')',
+          s.awards.map(a => ({ kind: 'award', before: BQ.clone(a), after: Object.assign(BQ.clone(a), { segment: t, order: mx + (a.order || 0) }) })));
+        draw();
+      };
+    });
+    m.el.querySelector('#sgAdd').onclick = async () => {
+      const nv = m.el.querySelector('#sgNew').value.trim();
+      if (!nv) return;
+      if (order.includes(nv)) { BQ.ui.toast('That segment already exists.'); return; }
+      await setOrder(order.concat([nv]), 'Added segment ' + nv);
+      draw();
+    };
+  };
+  draw();
 };

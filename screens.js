@@ -383,7 +383,7 @@ BQ.screens.home = {
       '<div class="stat ok"><b>' + s.seated + '</b><span>seated</span><div class="meter"><div style="width:' + pctSeated + '%"></div></div></div>' +
       '<div class="stat ' + (s.waiting ? 'warn' : '') + '"><b>' + s.waiting + '</b><span>waiting for a table</span></div>' +
       '<div class="stat"><b>' + s.open + '</b><span>open seats in the room</span><small>' + pctRoom + '% of ' + s.cap + ' chairs used</small></div>' +
-      '<div class="stat"><b>' + s.full + '<em>/' + (s.tables - s.hold) + '</em></b><span>tables full</span><small>' + s.hold + ' on hold</small></div>' +
+      '<div class="stat"><b>' + s.full + '<em>/' + (s.tables - s.hold - s.resTables) + '</em></b><span>tables full</span><small>' + s.hold + ' on hold' + (s.resTables ? ' · ' + s.resTables + ' reserved' : '') + '</small></div>' +
       '</div>' +
       '<div class="actions">' +
       '<button class="action" data-a="add"><span>＋</span>Add a guest or group</button>' +
@@ -476,7 +476,7 @@ BQ.screens.tables = {
   title: 'Table Rosters',
   render(main) {
     const V = BQ.rosterView;
-    const filters = [['all', 'All tables'], ['open', 'Has open seats'], ['full', 'Full'], ['empty', 'Empty'], ['hold', 'On hold']];
+    const filters = [['all', 'All tables'], ['open', 'Has open seats'], ['full', 'Full'], ['empty', 'Empty'], ['hold', 'On hold'], ['reserved', 'Reserved']];
     main.innerHTML = '<div class="page wide"><div class="page-head"><h1>Table Rosters</h1><span class="grow"></span>' +
       '<button class="btn" id="trPrint">🖨 Print rosters</button></div>' +
       '<div class="toolbar"><div class="chips">' + filters.map(f => '<button data-f="' + f[0] + '" class="' + (V.filter === f[0] ? 'on' : '') + '">' + f[1] + '</button>').join('') + '</div></div>' +
@@ -495,7 +495,7 @@ BQ.screens.tables = {
       const colors = {};
       BQ.chairPlan(t).forEach(c => { colors[c.pid] = c.color; });
       return '<div class="roster s-' + st + '" data-drop="table" data-tn="' + BQ.esc(t.n) + '">' +
-        '<div class="r-head"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : u.used + ' / ' + u.cap) + '</span></div>' +
+        '<div class="r-head"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : st === 'reserved' ? 'Reserved · ' + u.cap + ' seats' : u.used + ' / ' + u.cap) + '</span></div>' +
         (t.res || t.note ? '<div class="r-res">' + BQ.esc(t.res || t.note) + '</div>' : '') +
         (t.zone ? '<div class="r-zone">Area: ' + BQ.esc(t.zone) + '</div>' : '') +
         '<ul>' + u.parties.map(p => '<li><i class="dot" style="background:' + colors[p.id] + '"></i><span>' + BQ.esc(p.name) +
@@ -546,7 +546,7 @@ BQ.screens.requests = {
           (g[2] ? '<p class="muted small">' + g[2] + '</p>' : '') + (list.length ? list.map(row).join('') : '<p class="ok">Nothing here. Every request is met.</p>') + '</details>';
       }).join('') +
       '<div class="card"><h2>Tables with rules</h2>' + (ruled.length ? '<table class="grid"><thead><tr><th>Table</th><th>Status</th><th>Reserved for / note</th><th>Seated</th></tr></thead><tbody>' +
-        ruled.map(t => '<tr><td><a href="#" data-tbl="' + BQ.esc(t.n) + '"><b>' + BQ.esc(t.n) + '</b></a></td><td>' + ({ hold: 'On hold', closed: 'Marked full' }[t.st] || 'Open') + '</td><td>' + BQ.esc(t.res || t.note || '') + '</td><td>' + BQ.tableUse(t).used + '/' + t.s + '</td></tr>').join('') +
+        ruled.map(t => '<tr><td><a href="#" data-tbl="' + BQ.esc(t.n) + '"><b>' + BQ.esc(t.n) + '</b></a></td><td>' + ({ hold: 'On hold', closed: 'Marked full', reserved: 'Reserved' }[t.st] || 'Open') + '</td><td>' + BQ.esc(t.res || t.note || '') + '</td><td>' + BQ.tableUse(t).used + '/' + t.s + '</td></tr>').join('') +
         '</tbody></table>' : '<p class="muted">None yet. On the Seating Map, click a table to put it on hold, mark it full, or reserve it.</p>') + '</div>' +
       '<div class="card"><h2>Areas</h2><p class="muted small">Group tables into areas (e.g. “Command staff”, “Volunteers corner”), then use the request “In a certain area”. Assign tables on the Seating Map (shift-click several tables).</p>' +
       (zones.length ? '<div class="zones">' + zones.map((z, i) => '<div class="zone"><input type="color" value="' + z.color + '" data-zc="' + i + '"/><input value="' + BQ.esc(z.name) + '" data-zn="' + i + '"/><span class="muted small">' +
@@ -646,7 +646,9 @@ BQ.screens.checkin = {
     if (q) people = people.filter(x => x.name.toLowerCase().indexOf(q) >= 0 || (x.party.aff || '').toLowerCase().indexOf(q) >= 0);
     people.sort((a, b) => BQ.sortKey(a.name, a.org).localeCompare(BQ.sortKey(b.name, b.org)));
     const shown = people.slice(0, q ? 60 : 30);
-    box.innerHTML = shown.map(x => {
+    const blocks = !vipMode && q ? BQ.reservations().filter(b => b.label.toLowerCase().indexOf(q) >= 0) : [];
+    box.innerHTML = blocks.map(b => '<div class="ci block"><div class="ci-who"><b>' + BQ.esc(b.label) + '</b><div class="muted small">Reserved tables · ' + b.seats + ' seats</div></div>' +
+      '<div class="ci-table" style="grid-column: span 3; text-align:left"><small>TABLES</small><b>' + BQ.esc(b.tables.join(', ')) + '</b></div></div>').join('') + shown.map(x => {
       const p = x.party, h = here(p), t = total(p), done = h >= t;
       const vipNote = !vipMode && p.vip ? ' · <span class="vipchip">⭐ VIP</span>' : '';
       return '<div class="ci' + (done ? ' done' : '') + '"><div class="ci-who"><b>' + BQ.esc(x.name) + '</b>' +
@@ -659,7 +661,7 @@ BQ.screens.checkin = {
         (t - h > 1 ? '<button class="btn sm" data-one="' + p.id + '">＋1</button>' : '')) +
         (!vipMode && p.table ? '<button class="btn sm ghost" data-map="' + BQ.esc(p.table) + '">Map</button>' : '') + '</div></div>';
     }).join('') + (people.length > shown.length ? '<p class="muted">' + (people.length - shown.length) + ' more. Keep typing to narrow it down.</p>' : '') +
-      (!people.length ? '<p class="muted pad">' + (vipMode && !BQ.state.parties.some(p => p.vip) ? 'Nobody is marked for the VIP reception yet. Tick “VIP reception” in a guest’s details.' : 'No one matches.') + '</p>' : '');
+      (!people.length && !blocks.length ? '<p class="muted pad">' + (vipMode && !BQ.state.parties.some(p => p.vip) ? 'Nobody is marked for the VIP reception yet. Tick “VIP reception” in a guest’s details.' : 'No one matches.') + '</p>' : '');
     const field = vipMode ? 'vipIn' : 'checkedIn';
     const tot = a => vipMode ? BQ.vipCount(a) : a.seats;
     const label = vipMode ? 'VIP reception: ' : '';

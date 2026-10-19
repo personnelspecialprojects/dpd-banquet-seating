@@ -104,14 +104,16 @@ BQ.tableUse = function (t, ignorePartyId) {
   const ps = BQ.partiesAt(t.n).filter(p => p.id !== ignorePartyId);
   const used = ps.reduce((s, p) => s + (Number(p.seats) || 0), 0);
   const cap = Number(t.s) || 0;
-  const closed = t.st === 'closed';
-  return { parties: ps, used, cap, open: closed ? 0 : Math.max(0, cap - used), over: Math.max(0, used - cap), closed, hold: t.st === 'hold' };
+  const closed = t.st === 'closed' || t.st === 'reserved';
+  return { parties: ps, used, cap, open: closed ? 0 : Math.max(0, cap - used), over: Math.max(0, used - cap), closed, hold: t.st === 'hold', reserved: t.st === 'reserved' };
 };
 
-/* status used for colors & the classic export: full | open | empty | hold */
+/* status used for colors & the classic export: full | open | empty | hold | reserved
+   "reserved" = the whole table belongs to a block such as "FDP Sponsors" (every chair counts as taken) */
 BQ.tableStatus = function (t) {
   const u = BQ.tableUse(t);
   if (u.hold) return 'hold';
+  if (u.reserved) return 'reserved';
   if (u.used === 0) return u.closed ? 'full' : 'empty';
   if (u.closed || u.used >= u.cap) return 'full';
   return 'open';
@@ -121,10 +123,11 @@ BQ.stats = function () {
   const ps = BQ.state.parties, ts = BQ.tables();
   const requested = ps.reduce((s, p) => s + (Number(p.seats) || 0), 0);
   const seated = ps.filter(p => p.table).reduce((s, p) => s + (Number(p.seats) || 0), 0);
-  let cap = 0, open = 0, full = 0, hold = 0, used = 0;
+  let cap = 0, open = 0, full = 0, hold = 0, used = 0, resTables = 0, resSeats = 0;
   ts.forEach(t => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
     if (st === 'hold') { hold++; return; }
+    if (st === 'reserved') { resTables++; resSeats += u.cap; return; }
     cap += u.cap; open += u.open; used += u.used;
     if (st === 'full') full++;
   });
@@ -133,7 +136,7 @@ BQ.stats = function () {
   const vipInvited = ps.reduce((s, p) => s + BQ.vipCount(p), 0);
   const vipArrived = ps.reduce((s, p) => s + Math.min(Number(p.vipIn) || 0, BQ.vipCount(p)), 0);
   return { parties: ps.length, requested, seated, waiting: requested - seated, waitingParties: BQ.unseated().length,
-    cap, open, full, hold, tables: ts.length, arrived, unpaid, vipInvited, vipArrived, vipParties: ps.filter(p => p.vip).length };
+    cap, open, full, hold, resTables, resSeats, tables: ts.length, arrived, unpaid, vipInvited, vipArrived, vipParties: ps.filter(p => p.vip).length };
 };
 
 /* ---------------------------------------------------------------------
@@ -335,6 +338,7 @@ BQ.allIssues = function () {
     const u = BQ.tableUse(t);
     if (u.over > 0) out.push({ kind: 'over', table: t, state: 'bad', msg: 'Table ' + t.n + ' has ' + u.used + ' people for ' + u.cap + ' chairs' });
     if (u.hold && u.used > 0) out.push({ kind: 'hold', table: t, state: 'bad', msg: 'Table ' + t.n + ' is on hold but has guests seated' });
+    if (u.reserved && u.used > 0) out.push({ kind: 'hold', table: t, state: 'bad', msg: 'Table ' + t.n + ' is reserved for ' + (t.res || 'a block') + ' but has guests seated' });
   });
   BQ.state.parties.forEach(p => {
     if (p.table && !BQ.tableByNum(p.table)) out.push({ kind: 'missing', party: p, state: 'bad', msg: p.name + ' is assigned to Table ' + p.table + ', which isn’t in the room layout' });
@@ -365,7 +369,7 @@ BQ.suggest = function (p, occupancy, limit) {
   const results = [];
   const seats = Number(p.seats) || 1;
   BQ.tables().forEach(t => {
-    if (t.st === 'hold' || t.st === 'closed') return;
+    if (t.st === 'hold' || t.st === 'closed' || t.st === 'reserved') return;
     const u = BQ.tableUse(t, p.id);
     const used = occupancy && occupancy[t.n] != null ? occupancy[t.n] : u.used;
     const open = (Number(t.s) || 0) - used;
@@ -678,4 +682,27 @@ BQ.parseAwardName = function (raw) {
     else break;
   }
   return { name: parts.join(' ').replace(/\s+/g, ' '), badge, rankTag };
+};
+
+/* ---------------------------------------------------------------------
+   Reserved table blocks (e.g. "FDP Sponsors": whole tables, names unknown)
+   --------------------------------------------------------------------- */
+BQ.reservations = function () {
+  const by = {};
+  BQ.tables().filter(t => t.st === 'reserved').forEach(t => {
+    const k = t.res || 'Reserved';
+    (by[k] = by[k] || { label: k, tables: [], seats: 0 }).tables.push(String(t.n));
+    by[k].seats += Number(t.s) || 0;
+  });
+  return Object.keys(by).sort().map(k => { by[k].tables.sort(BQ.numSort); return by[k]; });
+};
+// "3, 5, 9-12, 40" → ['3','5','9','10','11','12','40']
+BQ.parseTableList = function (txt) {
+  const out = [];
+  String(txt || '').split(/[,;\s]+/).filter(Boolean).forEach(tok => {
+    const m = tok.replace(/^table/i, '').match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (m) { const a = Number(m[1]), b = Number(m[2]); for (let i = Math.min(a, b); i <= Math.max(a, b) && out.length < 500; i++) out.push(String(i)); }
+    else out.push(tok.replace(/^table/i, '').replace(/\*$/, ''));
+  });
+  return Array.from(new Set(out.filter(Boolean)));
 };

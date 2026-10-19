@@ -93,10 +93,13 @@ X.CLASSIC = { FULL: 'FF92D050', FULL_DARK: 'FF70AD47', VACANT: 'FFC00000', HOLD:
 X.classicBlock = function (t) {
   const u = BQ.tableUse(t), st = BQ.tableStatus(t);
   const rows = [];
-  const status = st === 'hold' ? '' : (st === 'full' ? 'Full-' + u.used : (u.used === 0 ? '' : u.open + ' ava'));
-  const statusFill = st === 'hold' ? X.CLASSIC.HOLD : st === 'full' ? X.CLASSIC.FULL : X.CLASSIC.VACANT;
+  const status = st === 'hold' ? '' : st === 'reserved' ? 'Full-' + Math.max(u.used, u.cap) : (st === 'full' ? 'Full-' + u.used : (u.used === 0 ? '' : u.open + ' ava'));
+  const statusFill = st === 'hold' ? X.CLASSIC.HOLD : (st === 'full' || st === 'reserved') ? X.CLASSIC.FULL : X.CLASSIC.VACANT;
   const ps = u.parties.slice().sort((a, b) => (a.id || 0) - (b.id || 0));
-  if (st === 'hold' && !ps.length) {
+  if (st === 'reserved' && !ps.length) {
+    // a reserved block prints like a unit row: name in blue, all chairs counted
+    rows.push({ a: X.tableLabel(t.n), b: t.res || 'Reserved', c: u.cap, d: status, fillA: statusFill, fillB: X.CLASSIC.UNITS, fillD: statusFill });
+  } else if (st === 'hold' && !ps.length) {
     rows.push({ a: X.tableLabel(t.n), b: t.note || t.res || 'Leave empty', c: 'hold', d: '', fillA: X.CLASSIC.HOLD, fillB: X.CLASSIC.HOLD, fillC: X.CLASSIC.HOLD, fillD: X.CLASSIC.HOLD });
   } else if (!ps.length) {
     rows.push({ a: X.tableLabel(t.n), b: t.res || '', c: '', d: '', fillA: X.CLASSIC.VACANT, fillD: X.CLASSIC.VACANT, boldD: true });
@@ -207,6 +210,9 @@ X.alphaRows = function () {
     else party = 'Guest of ' + p.name;
     return { key: BQ.sortKey(x.name, x.org), first: n.first, last: n.last, name: x.name, table: p.table || '', party, seats: x.leader ? p.seats : '', p, leader: x.leader, org: x.org };
   });
+  // reserved blocks (e.g. FDP Sponsors) get one line listing their tables
+  BQ.reservations().forEach(b => rows.push({ key: BQ.sortKey(b.label, true), first: '', last: b.label, name: b.label, table: b.tables.join(', '),
+    party: 'Reserved: ' + BQ.plural(b.tables.length, 'table'), seats: b.seats, p: { vip: false, pay: '', seats: b.seats }, leader: false, org: true, block: true }));
   rows.sort((a, b) => a.key.localeCompare(b.key));
   return rows;
 };
@@ -252,12 +258,12 @@ X.rostersXlsx = async function () {
   ws.columns = [{ width: 30 }, { width: 8 }, { width: 24 }, { width: 46 }, { width: 40 }];
   X.title(ws, BQ.state.event.title + ' — Table Rosters', 'Printed ' + new Date().toLocaleString(), 5);
   let r = 4;
-  const fills = { full: 'FFC6E7C1', open: 'FFF8CBCB', empty: 'FFEFEFEF', hold: 'FFFFE3A3' };
+  const fills = { full: 'FFC6E7C1', open: 'FFF8CBCB', empty: 'FFEFEFEF', hold: 'FFFFE3A3', reserved: 'FFFFF1C2' };
   X.sortedTables().forEach(t => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
     ws.mergeCells(r, 1, r, 5);
     const h = ws.getCell(r, 1);
-    h.value = 'TABLE ' + t.n + '   —   ' + (st === 'hold' ? 'ON HOLD' : u.used + ' of ' + u.cap + ' seats' + (u.open ? ' (' + u.open + ' open)' : ' (full)')) +
+    h.value = 'TABLE ' + t.n + '   —   ' + (st === 'hold' ? 'ON HOLD' : st === 'reserved' ? 'RESERVED (' + u.cap + ' seats)' : u.used + ' of ' + u.cap + ' seats' + (u.open ? ' (' + u.open + ' open)' : ' (full)')) +
       (t.res || t.note ? '   —   ' + (t.res || t.note) : '') + (t.zone ? '   —   Area: ' + t.zone : '');
     h.font = { bold: true, size: 13 }; h.fill = X.fill(fills[st]); h.border = X.thin;
     ws.getRow(r).height = 20;
@@ -284,7 +290,7 @@ X.rostersXlsx = async function () {
   X.header(sum, 1, ['Table', 'Chairs', 'Seated', 'Open', 'Status', 'Area', 'Reserved / note', 'Row']);
   X.sortedTables().forEach((t, i) => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
-    sum.getRow(i + 2).values = [isNaN(Number(t.n)) ? t.n : Number(t.n), u.cap, u.used, u.open, { full: 'Full', open: 'Open seats', empty: 'Empty', hold: 'On hold' }[st], t.zone || '', t.res || t.note || '', BQ.rowOf(t.n)];
+    sum.getRow(i + 2).values = [isNaN(Number(t.n)) ? t.n : Number(t.n), u.cap, u.used, u.open, { full: 'Full', open: 'Open seats', empty: 'Empty', hold: 'On hold', reserved: 'Reserved' }[st], t.zone || '', t.res || t.note || '', BQ.rowOf(t.n)];
   });
   sum.autoFilter = { from: 'A1', to: 'H1' };
   await X.save(wb, 'Table rosters');
@@ -375,7 +381,7 @@ X.lineupXlsx = async function () {
   X.title(rt, 'Escort Pickup Route', 'Walking order, row by row from the stage', 8);
   X.header(rt, 3, ['Segment', 'Stop', 'Table', 'Recipient', 'People', 'Award #', 'Log #', 'Award']);
   r = 4;
-  BQ.segments().forEach(sg => {
+  BQ.segments().filter(sg => sg.awards.length).forEach(sg => {
     BQ.pickupRoute(sg.awards).forEach((s, i) => {
       rt.getRow(r).values = [sg.name || 'Program', i + 1, s.seat.table || s.seat.text, BQ.recipLabel(s.r), s.r.count || 1, s.num, s.award.logNo || '', s.award.name];
       rt.getRow(r).getCell(3).font = { bold: true, size: 12 };
@@ -400,7 +406,7 @@ X.awardFileXlsx = async function () {
   h.font = { bold: true };
   [6, 7, 8].forEach(c => { h.getCell(c).fill = X.fill('FFDCE6F2'); });
   let r = 2;
-  BQ.segments().forEach(sg => {
+  BQ.segments().filter(sg => sg.awards.length).forEach(sg => {
     const hc = ws.getRow(r);
     hc.getCell(2).value = (sg.name || 'Awards').toUpperCase();
     hc.getCell(2).font = { bold: true };
@@ -557,7 +563,7 @@ X.printAlpha = function () {
 X.printRosters = function () {
   const cards = X.sortedTables().filter(t => BQ.tableStatus(t) !== 'empty').map(t => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
-    return '<div class="pr-card s-' + st + '"><div class="pr-h"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : u.used + '/' + u.cap) + '</span></div>' +
+    return '<div class="pr-card s-' + st + '"><div class="pr-h"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : st === 'reserved' ? 'Reserved' : u.used + '/' + u.cap) + '</span></div>' +
       (t.res || t.note ? '<div class="pr-res">' + BQ.esc(t.res || t.note) + '</div>' : '') +
       '<ul>' + u.parties.map(p => '<li><span>' + BQ.esc(p.name) + ((p.guests || []).length ? '<small>' + BQ.esc(p.guests.join(', ')) + '</small>' : '') + '</span><b>' + p.seats + '</b></li>').join('') + '</ul></div>';
   }).join('');
@@ -575,7 +581,7 @@ X.printLineup = function () {
   const all = BQ.awardsSorted();
   if (!all.length) { BQ.ui.toast('Add awards first.'); return; }
   let html = '<div class="plineup">' + X.printHead('Awards Lineup');
-  BQ.segments().forEach(sg => {
+  BQ.segments().filter(sg => sg.awards.length).forEach(sg => {
     html += '<h2>' + BQ.esc(sg.name || 'Program') + '</h2><table><thead><tr><th>#</th><th>Award</th><th>Recipient(s)</th><th>Table</th><th>In line</th></tr></thead><tbody>';
     sg.awards.forEach(a => {
       const recs = a.recipients || [];
@@ -598,7 +604,7 @@ X.printTents = async function () {
 };
 
 X.printEscort = function () {
-  const rows = X.alphaRows().filter(x => x.table);
+  const rows = X.alphaRows().filter(x => x.table && !x.block);
   if (!rows.length) { BQ.ui.toast('Nobody is seated yet.'); return; }
   X.print('<div class="escort">' + rows.map(x => '<div class="ec"><div class="ec-ev">' + BQ.esc(BQ.state.event.title) + '</div><div class="ec-name">' + BQ.esc(x.name) + '</div>' +
     '<div class="ec-t"><small>TABLE</small>' + BQ.esc(x.table) + '</div></div>').join('') + '</div>', 'portrait', 'escort cards');

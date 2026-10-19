@@ -458,6 +458,19 @@ body.kiosk .page { padding: 12px 12px 40px; max-width: 760px; }
 body.kiosk .ci-search { position: sticky; top: 0; z-index: 2; }
 body.kiosk .topbar .user { display: none; }
 
+.resrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 6px; background: #FFF8E1; color: #3A2C00; }
+.resrow span { flex: 1; font-size: 13.5px; }
+.stpill.s-reserved { background: #FFF1C2; color: #7A5A00; }
+.roster.s-reserved { border-top-color: #A87900; background: #FFFAEB; }
+
+.selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin: 0 0 12px; }
+.award { grid-template-columns: 20px 40px 1fr auto; }
+.award .a-sel { width: 18px; height: 18px; min-height: 0; margin: 0; cursor: pointer; }
+.award.picked { outline: 3px solid var(--gold2); }
+.award.picked .a-num { background: var(--gold2); color: #3A2600; }
+.segrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 6px; background: var(--card); }
+.segrow input[data-name] { flex: 1; min-width: 160px; }
+
 /* ---- responsive ---- */
 @media (max-width: 1280px) {
   .seat-screen { grid-template-columns: 260px 1fr 300px; }

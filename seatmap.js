@@ -79,8 +79,8 @@ BQ.tableSvg = function (t, o) {
     }
   }
   // table top
-  const fills = { full: '#E4F3E1', open: '#FDE8E8', empty: '#FFFFFF', hold: 'url(#bqHold)' };
-  const strokes = { full: '#2E7D32', open: '#C62828', empty: '#9AA5B4', hold: '#E08600' };
+  const fills = { full: '#E4F3E1', open: '#FDE8E8', empty: '#FFFFFF', hold: 'url(#bqHold)', reserved: '#FFF4D0' };
+  const strokes = { full: '#2E7D32', open: '#C62828', empty: '#9AA5B4', hold: '#E08600', reserved: '#A87900' };
   const fill = o.fill || fills[status];
   const stroke = ring || strokes[status];
   const sw = status === 'empty' && !ring ? 1.5 : 3;
@@ -154,6 +154,12 @@ BQ.tableLook = function (t, opts) {
   const status = BQ.tableStatus(t);
   const look = { status, chairs: BQ.chairPlan(t), over: u.over };
   look.sub = status === 'hold' ? 'HOLD' : (u.used + '/' + u.cap);
+  if (status === 'reserved') {
+    // every chair shows as taken by the block (not draggable: there's no guest record behind it)
+    look.sub = 'RESERVED';
+    const taken = look.chairs.length;
+    for (let i = taken; i < u.cap; i++) look.chairs.push({ color: '#D9A520', pid: null, name: t.res || 'Reserved' });
+  }
   if (t.res) look.below = t.res;
   else if (status === 'hold' && t.note) look.below = t.note;
   const zone = t.zone && (BQ.settings().zones || []).find(z => z.name === t.zone);
@@ -411,6 +417,11 @@ BQ.seatFlow = async function (pid, n) {
   if (!p || !t) return;
   if (String(p.table) === String(n)) return;
   if (p.pinned) { BQ.ui.toast('📌 ' + p.name + ' is pinned. Unpin them first.'); return; }
+  if (t.st === 'reserved') {
+    const ok = await BQ.ui.confirm('Table ' + n + ' is reserved for ' + (t.res || 'a block') + '. Seat ' + p.name + ' here anyway?', 'Seat here anyway');
+    if (ok) await BQ.seatParty(p.id, n);
+    return;
+  }
   if (t.st === 'hold') {
     const ok = await BQ.ui.confirm('Table ' + n + ' is on hold' + (t.note ? ' (“' + t.note + '”)' : '') + '. Seat ' + p.name + ' here anyway?', 'Seat here anyway');
     if (!ok) return;
@@ -477,6 +488,7 @@ BQ.screens.seat = {
       '    <span class="grow"></span>' +
       '    <button class="btn" id="btnAuto" title="Suggest seats for everyone waiting">✨ Auto-seat…</button>' +
       '    <button class="btn" id="btnPrintMap" title="Print or save the map as PDF">🖨 Print map</button>' +
+      '    <button class="btn" id="btnReserve" title="Block whole tables for a group such as FDP Sponsors">🔒 Reserve tables…</button>' +
       '    <button class="btn" id="btnGlance" title="Room totals and seating tips">ℹ️ Summary</button>' +
       '  </div>' +
       '  <div class="map-area"><div id="mapHost"></div>' +
@@ -520,6 +532,7 @@ BQ.screens.seat = {
     $('zFit').onclick = () => map.fit();
     $('btnAuto').onclick = () => BQ.autoSeatDialog();
     $('btnPrintMap').onclick = () => BQ.exports.printMap();
+    $('btnReserve').onclick = () => BQ.reserveDialog();
     $('btnGlance').onclick = () => { V.panel = V.panel && V.panel.type === 'overview' ? null : { type: 'overview' }; this.refresh(); };
     $('mapFind').addEventListener('change', e => this.find(e.target.value));
     $('mapFind').addEventListener('keydown', e => { if (e.key === 'Enter') this.find(e.target.value); });
@@ -529,6 +542,10 @@ BQ.screens.seat = {
   find(q) {
     q = String(q || '').trim();
     if (!q) return;
+    // Enter and "change" both fire for one search; run it once
+    const now = Date.now();
+    if (this._lastFind && this._lastFind.q === q && now - this._lastFind.t < 600) return;
+    this._lastFind = { q, t: now };
     const V = BQ.seatView, map = V.map;
     const m = q.match(/^(?:table\s*)?(\S+)$/i);
     if (m && BQ.tableByNum(m[1])) {
@@ -536,6 +553,8 @@ BQ.screens.seat = {
       map.focusTable(m[1]); this.refresh(); return;
     }
     const ql = q.toLowerCase().replace(/\s+\(table.*$/, '');
+    const block = BQ.reservations().find(r => r.label.toLowerCase().indexOf(ql) >= 0);
+    if (block) { map.hl = new Set(block.tables); V.panel = null; this.refresh(); BQ.ui.toast(block.label + ': Tables ' + block.tables.join(', ')); return; }
     const hit = BQ.people().find(x => x.name.toLowerCase() === ql) || BQ.people().find(x => x.name.toLowerCase().indexOf(ql) >= 0);
     if (!hit) { BQ.ui.toast('No guest or table matches “' + q + '”'); return; }
     if (hit.party.table) {
@@ -568,7 +587,7 @@ BQ.screens.seat = {
     const V = BQ.seatView, el = document.getElementById('mapLegend');
     if (!el) return;
     let items = [];
-    if (V.colorBy === 'status') items = [['#2E7D32', 'Full'], ['#C62828', 'Open seats'], ['#9AA5B4', 'Empty'], ['#E08600', 'On hold']];
+    if (V.colorBy === 'status') items = [['#2E7D32', 'Full'], ['#C62828', 'Open seats'], ['#9AA5B4', 'Empty'], ['#E08600', 'On hold'], ['#A87900', 'Reserved']];
     if (V.colorBy === 'pay') items = [['#2E7D32', 'All paid/comp'], ['#E0A100', 'Pending/invoice'], ['#C62828', 'Not paid'], ['#9AA5B4', 'Not set']];
     if (V.colorBy === 'checkin') items = [['#2E7D32', 'All here'], ['#E0A100', 'Some here'], ['#9AA5B4', 'None yet']];
     if (V.colorBy === 'needs') items = [['#2E7D32', 'Requests met'], ['#E0A100', 'Reminder/waiting'], ['#C62828', 'Request not met']];
@@ -662,7 +681,7 @@ BQ.tablePanel = function (el, t, screen) {
   const chairs = BQ.chairPlan(t);
   const colorOf = {};
   chairs.forEach(c => { colorOf[c.pid] = c.color; });
-  const statusText = { full: 'Full', open: u.open + ' open seat' + (u.open === 1 ? '' : 's'), empty: 'Empty', hold: 'On hold' }[st];
+  const statusText = { full: 'Full', open: u.open + ' open seat' + (u.open === 1 ? '' : 's'), empty: 'Empty', hold: 'On hold', reserved: 'Reserved' + (t.res ? ': ' + t.res : '') }[st];
   const where = 'Row ' + (g.rowOf[String(t.n)] || '?') + ' from the stage' + (g.edge[String(t.n)] ? ' · edge/aisle' : '') + (g.exitDist[String(t.n)] <= BQ.settings().exitSpacing ? ' · near exit' : '');
   const pct = u.cap ? Math.min(100, Math.round(u.used / u.cap * 100)) : 0;
   el.innerHTML =
@@ -674,11 +693,11 @@ BQ.tablePanel = function (el, t, screen) {
       color: colorOf[p.id], selected: BQ.seatView.panel && BQ.seatView.panel.focus === p.id,
       actions: '<button class="linkbtn edit">Edit</button><button class="linkbtn move">Move…</button><button class="linkbtn unseat">Take off table</button>'
     })).join('') : '<p class="muted">Nobody here yet.</p>') + '</div>' +
-    (st !== 'hold' ? '<button class="btn primary block" id="tpSeat">＋ Seat someone here' + (u.open ? ' (' + u.open + ' open)' : '') + '</button>' : '') +
+    (st !== 'hold' && st !== 'reserved' ? '<button class="btn primary block" id="tpSeat">＋ Seat someone here' + (u.open ? ' (' + u.open + ' open)' : '') + '</button>' : '') +
     '<details class="tp-settings"' + (BQ.seatView.tpOpen ? ' open' : '') + '><summary>Table settings</summary>' +
     '<div class="field"><label>Chairs at this table</label><div class="stepper"><button id="chMinus">－</button><b id="chN">' + t.s + '</b><button id="chPlus">＋</button></div></div>' +
     '<div class="field"><label>Status</label><div class="seg" id="tpSt">' +
-    [['open', 'Open'], ['closed', 'Mark full'], ['hold', 'On hold']].map(o => '<button data-v="' + o[0] + '" class="' + ((t.st || 'open') === o[0] ? 'on' : '') + '">' + o[1] + '</button>').join('') + '</div>' +
+    [['open', 'Open'], ['closed', 'Mark full'], ['hold', 'On hold'], ['reserved', 'Reserved']].map(o => '<button data-v="' + o[0] + '" class="' + ((t.st || 'open') === o[0] ? 'on' : '') + '">' + o[1] + '</button>').join('') + '</div>' +
     '<div class="muted small">“Mark full” stops new seating even if chairs are empty. “On hold” saves the table (e.g. leave empty).</div></div>' +
     '<div class="field"><label>Reserved for / note (shows under the table)</label><input id="tpRes" value="' + BQ.esc(t.res || t.note || '') + '" placeholder="e.g. Volunteers, Leave empty"/></div>' +
     '<div class="field"><label>Area</label><select id="tpZone"><option value="">— none —</option>' + zones.map(z => '<option' + (t.zone === z.name ? ' selected' : '') + '>' + BQ.esc(z.name) + '</option>').join('') + '<option value="__new">＋ New area…</option></select></div>' +
@@ -697,7 +716,14 @@ BQ.tablePanel = function (el, t, screen) {
   const setT = (label, fn) => BQ.commit(label, [BQ.eventChange(e => { fn(e.layout.tables.find(x => String(x.n) === String(t.n))); })]);
   el.querySelector('#chMinus').onclick = () => { if (t.s > 1) setT('Table ' + t.n + ': ' + (t.s - 1) + ' chairs', x => { x.s = t.s - 1; }); };
   el.querySelector('#chPlus').onclick = () => setT('Table ' + t.n + ': ' + (t.s + 1) + ' chairs', x => { x.s = t.s + 1; });
-  el.querySelectorAll('#tpSt button').forEach(b => b.onclick = () => setT('Table ' + t.n + ' set to ' + b.textContent, x => { x.st = b.dataset.v === 'open' ? '' : b.dataset.v; }));
+  el.querySelectorAll('#tpSt button').forEach(b => b.onclick = async () => {
+    if (b.dataset.v === 'reserved') {
+      const label = await BQ.askReserveLabel(t.res);
+      if (!label) return;
+      return setT('Table ' + t.n + ' reserved for ' + label, x => { x.st = 'reserved'; x.res = label; delete x.note; });
+    }
+    setT('Table ' + t.n + ' set to ' + b.textContent, x => { x.st = b.dataset.v === 'open' ? '' : b.dataset.v; });
+  });
   el.querySelector('#tpRes').onchange = e => setT('Table ' + t.n + ' note: ' + (e.target.value || '(cleared)'), x => { x.res = e.target.value.trim(); delete x.note; });
   el.querySelector('#tpZone').onchange = async e => {
     let v = e.target.value;
@@ -713,7 +739,7 @@ BQ.multiTablePanel = function (el, ts, screen) {
   el.innerHTML = '<h2>' + ts.length + ' tables selected</h2><p class="muted">Tables ' + nums.join(', ') + '</p>' +
     '<div class="field"><label>Put these tables in an area</label><select id="mtZone"><option value="">Choose…</option>' +
     zones.map(z => '<option>' + BQ.esc(z.name) + '</option>').join('') + '<option value="__none">Remove from area</option><option value="__new">＋ New area…</option></select></div>' +
-    '<div class="field"><label>Status</label><div class="seg" id="mtSt"><button data-v="">Open</button><button data-v="closed">Mark full</button><button data-v="hold">On hold</button></div></div>' +
+    '<div class="field"><label>Status</label><div class="seg" id="mtSt"><button data-v="">Open</button><button data-v="closed">Mark full</button><button data-v="hold">On hold</button><button data-v="reserved">Reserved…</button></div></div>' +
     '<div class="field"><label>Chairs at each table</label><div class="stepper"><input id="mtChairs" type="number" min="1" max="30" placeholder="12"/><button class="btn" id="mtChairsGo">Apply</button></div></div>' +
     '<button class="btn block" id="mtClear">Clear selection</button>';
   const apply = (label, fn) => BQ.commit(label, [BQ.eventChange(e => { e.layout.tables.forEach(x => { if (nums.includes(x.n)) fn(x); }); })]);
@@ -724,7 +750,14 @@ BQ.multiTablePanel = function (el, ts, screen) {
     if (v === '__none') v = '';
     apply('Area “' + (v || 'none') + '” for tables ' + nums.join(', '), x => { x.zone = v; });
   };
-  el.querySelectorAll('#mtSt button').forEach(b => b.onclick = () => apply(b.textContent + ': tables ' + nums.join(', '), x => { x.st = b.dataset.v; }));
+  el.querySelectorAll('#mtSt button').forEach(b => b.onclick = async () => {
+    if (b.dataset.v === 'reserved') {
+      const label = await BQ.askReserveLabel();
+      if (!label) return;
+      return apply('Reserved tables ' + nums.join(', ') + ' for ' + label, x => { x.st = 'reserved'; x.res = label; delete x.note; });
+    }
+    apply(b.textContent + ': tables ' + nums.join(', '), x => { x.st = b.dataset.v; if (x.st !== 'reserved' && b.dataset.v === '') { /* keep any note */ } });
+  });
   el.querySelector('#mtChairsGo').onclick = () => {
     const n = parseInt(el.querySelector('#mtChairs').value, 10);
     if (n > 0) apply(n + ' chairs at tables ' + nums.join(', '), x => { x.s = n; });
@@ -809,4 +842,68 @@ BQ.autoSeatDialog = function () {
       }
     }]
   });
+};
+
+/* ---------------------------------------------------------------------
+   Reserve whole tables for a block (e.g. FDP Sponsors)
+   --------------------------------------------------------------------- */
+BQ.askReserveLabel = function (current) {
+  return new Promise(res => {
+    const labels = Array.from(new Set(BQ.reservations().map(r => r.label).concat(['FDP Sponsors'])));
+    let done = false;
+    const m = BQ.ui.modal({
+      title: 'Reserved for…',
+      body: '<input id="rlName" class="block" list="rlList" value="' + BQ.esc(current || labels[0]) + '"/><datalist id="rlList">' + labels.map(l => '<option value="' + BQ.esc(l) + '">').join('') + '</datalist>' +
+        '<p class="muted small">The whole table is blocked and every chair counts as taken.</p>',
+      buttons: [{ label: 'Cancel', onClick: () => { done = true; res(null); } }, { label: 'Reserve', cls: 'primary', onClick: () => { done = true; res(m.el.querySelector('#rlName').value.trim() || null); } }],
+      onClose: () => { if (!done) res(null); }
+    });
+    setTimeout(() => m.el.querySelector('#rlName').select(), 30);
+  });
+};
+
+BQ.reserveDialog = function () {
+  const blocks = BQ.reservations();
+  const labels = Array.from(new Set(blocks.map(r => r.label).concat(['FDP Sponsors'])));
+  const body =
+    '<p>Block whole tables for a group, like <b>FDP Sponsors</b>. Reserved tables can’t be seated by accident, every chair counts as taken, and they print with the group’s name.</p>' +
+    '<div class="field"><label>Reserved for</label><input id="rvLabel" list="rvList" value="' + BQ.esc(labels[0]) + '"/><datalist id="rvList">' + labels.map(l => '<option value="' + BQ.esc(l) + '">').join('') + '</datalist></div>' +
+    '<div class="field"><label>Table numbers <span class="muted">(commas and ranges work: 3, 5, 9-12, 40)</span></label><input id="rvTables" placeholder="e.g. 3, 5, 9-12"/></div>' +
+    '<div id="rvPrev" class="small"></div>' +
+    (blocks.length ? '<h3>Reserved now</h3>' + blocks.map(b => '<div class="resrow"><b>' + BQ.esc(b.label) + '</b><span>Tables ' + b.tables.join(', ') + ' · ' + b.tables.length + ' tables, ' + b.seats + ' seats</span>' +
+      '<button class="btn sm" data-release="' + BQ.esc(b.label) + '">Release all</button></div>').join('') : '');
+  const m = BQ.ui.modal({
+    title: '🔒 Reserve tables', body, wide: true,
+    buttons: [{ label: 'Close' }, {
+      label: 'Reserve these tables', cls: 'primary', onClick: async () => {
+        const label = m.el.querySelector('#rvLabel').value.trim();
+        const nums = BQ.parseTableList(m.el.querySelector('#rvTables').value).filter(n => BQ.tableByNum(n));
+        if (!label) { BQ.ui.toast('Type who the tables are reserved for.', 'bad'); return false; }
+        if (!nums.length) { BQ.ui.toast('Type at least one table number that’s in the room.', 'bad'); return false; }
+        const ok = await BQ.commit('Reserved ' + BQ.plural(nums.length, 'table') + ' for ' + label + ' (' + nums.join(', ') + ')',
+          [BQ.eventChange(e => e.layout.tables.forEach(t => { if (nums.includes(String(t.n))) { t.st = 'reserved'; t.res = label; delete t.note; } }))]);
+        if (ok) BQ.ui.toast('Reserved ' + BQ.plural(nums.length, 'table') + ' for ' + label + ' ✓', 'ok');
+      }
+    }]
+  });
+  const prev = () => {
+    const raw = BQ.parseTableList(m.el.querySelector('#rvTables').value);
+    const ok = raw.filter(n => BQ.tableByNum(n)), bad = raw.filter(n => !BQ.tableByNum(n));
+    const withGuests = ok.filter(n => BQ.partiesAt(n).length);
+    const other = ok.filter(n => { const t = BQ.tableByNum(n); return t.st === 'reserved' && t.res !== m.el.querySelector('#rvLabel').value.trim(); });
+    m.el.querySelector('#rvPrev').innerHTML = !raw.length ? '' :
+      '<p>' + (ok.length ? '<b>' + ok.length + '</b> table' + (ok.length === 1 ? '' : 's') + ': ' + ok.join(', ') + ' (' + ok.reduce((s, n) => s + (Number(BQ.tableByNum(n).s) || 0), 0) + ' seats)' : '') + '</p>' +
+      (bad.length ? '<p class="bad">Not in this room: ' + bad.map(BQ.esc).join(', ') + '</p>' : '') +
+      (withGuests.length ? '<p class="warn">Guests are already seated at ' + withGuests.join(', ') + '. They’ll stay there and show as a problem until you move them.</p>' : '') +
+      (other.length ? '<p class="warn">Already reserved for another group (will switch): ' + other.join(', ') + '</p>' : '');
+  };
+  m.el.querySelector('#rvTables').oninput = prev;
+  m.el.querySelector('#rvLabel').oninput = prev;
+  m.el.querySelectorAll('[data-release]').forEach(b => b.onclick = async () => {
+    const label = b.dataset.release;
+    if (!(await BQ.ui.confirm('Release all tables reserved for ' + label + '? They become open tables again.', 'Release'))) return;
+    m.close();
+    BQ.commit('Released tables reserved for ' + label, [BQ.eventChange(e => e.layout.tables.forEach(t => { if (t.st === 'reserved' && (t.res || 'Reserved') === label) { t.st = ''; t.res = ''; } }))]);
+  });
+  setTimeout(() => m.el.querySelector('#rvTables').focus(), 40);
 };
