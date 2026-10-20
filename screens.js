@@ -220,7 +220,7 @@ BQ.showHelp = function () {
    --------------------------------------------------------------------- */
 BQ.ui.openParty = function (p, defaults) {
   const isNew = !p;
-  const d = isNew ? Object.assign({ name: '', type: 'Guest', aff: '', seats: 1, table: '', guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: '', pinned: false, checkedIn: 0, vip: false, vipCount: 0, vipIn: 0 }, defaults || {}) : BQ.clone(p);
+  const d = isNew ? Object.assign({ name: '', badge: '', type: 'Guest', aff: '', seats: 1, table: '', guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: '', pinned: false, checkedIn: 0, vip: false, vipCount: 0, vipIn: 0 }, defaults || {}) : BQ.clone(p);
   d.needs = d.needs || [];
   const affs = Array.from(new Set(BQ.state.parties.map(x => x.aff).filter(Boolean))).sort();
   const tables = BQ.tables().slice().sort((a, b) => BQ.numSort(a.n, b.n));
@@ -231,7 +231,9 @@ BQ.ui.openParty = function (p, defaults) {
 
   const body =
     '<div class="pform">' +
-    '<div class="field"><label>Name <span class="muted">(person, family, unit, or organization)</span></label><input id="pfName" class="big" value="' + BQ.esc(d.name) + '" placeholder="e.g. Laura Dodd   or   Robbery Unit"/></div>' +
+    '<div class="field namebadge"><div><label>Name <span class="muted">(person, family, unit, or organization)</span></label><input id="pfName" class="big" value="' + BQ.esc(d.name) + '" placeholder="e.g. Laura Dodd   or   Robbery Unit"/></div>' +
+    '<div><label>Badge # <span class="muted">(optional)</span></label><input id="pfBadge" value="' + BQ.esc(d.badge || '') + '" placeholder="e.g. 12963"/></div></div>' +
+    '<div id="pfDupNote"></div>' +
     '<div class="field"><label>What kind of guest?</label><div class="chips" id="pfType">' + BQ.PARTY_TYPES.map(t =>
       '<button data-v="' + t.k + '" class="' + (d.type === t.k ? 'on' : '') + '">' + t.icon + ' ' + BQ.esc(t.label) + '</button>').join('') + '</div></div>' +
     '<div class="field two"><div><label>Unit / organization <span class="muted">(optional)</span></label><input id="pfAff" list="pfAffs" value="' + BQ.esc(d.aff) + '" placeholder="e.g. Robbery Unit"/><datalist id="pfAffs">' + affs.map(a => '<option value="' + BQ.esc(a) + '">').join('') + '</datalist></div>' +
@@ -251,13 +253,27 @@ BQ.ui.openParty = function (p, defaults) {
 
   const m = BQ.ui.modal({
     title: isNew ? 'Add a guest or group' : 'Edit ' + d.name, wide: true, body,
-    left: isNew ? '' : '<button class="btn danger" id="pfDel">Delete</button><button class="btn" id="pfSplit">Split party…</button>',
+    left: isNew ? '' : '<button class="btn danger" id="pfDel">Delete</button><button class="btn" id="pfSplit">Split party…</button><button class="btn" id="pfMerge" title="Combine this record with another record for the same person">Merge…</button>',
     buttons: [{ label: 'Cancel' }, { label: isNew ? 'Add' : 'Save', cls: 'primary', onClick: () => save() }]
   });
   const $ = s => m.el.querySelector(s);
   const seatsEl = $('#pfSeats');
   const namedInfo = () => { const n = $('#pfGuests').value.split(/\n/).filter(x => x.trim()).length; $('#pfNamed').textContent = n ? '· ' + n + ' named' : ''; };
   $('#pfGuests').oninput = namedInfo; namedInfo();
+  const pullBadge = () => {
+    const c = BQ.cleanPerson($('#pfName').value);
+    if (c.badge && c.name) { $('#pfName').value = c.name; if (!$('#pfBadge').value.trim()) $('#pfBadge').value = c.badge; }
+    dupNote();
+  };
+  const dupNote = () => {
+    const box = $('#pfDupNote');
+    const same = BQ.sameNameParties($('#pfName').value, $('#pfBadge').value.trim(), d.id);
+    box.innerHTML = same.length ? '<div class="dupnote">👥 Also on the guest list: ' + same.map(x => '<b>' + BQ.esc(x.name) + '</b>' + (x.badge ? ' #' + BQ.esc(x.badge) : '') +
+      (x.table ? ' (Table ' + BQ.esc(x.table) + ')' : ' (not seated)')).join(', ') + '. If this is the same person, ' + (isNew ? 'edit that record instead.' : 'use <b>Merge…</b>.') + '</div>' : '';
+  };
+  $('#pfName').addEventListener('change', pullBadge);
+  $('#pfBadge').addEventListener('change', () => { $('#pfBadge').value = $('#pfBadge').value.replace(/[^0-9A-Za-z]/g, ''); dupNote(); });
+  dupNote();
   $('#pfMinus').onclick = () => { seatsEl.value = Math.max(1, (parseInt(seatsEl.value, 10) || 1) - 1); };
   $('#pfPlus').onclick = () => { seatsEl.value = (parseInt(seatsEl.value, 10) || 0) + 1; };
   m.el.querySelectorAll('#pfType button').forEach(b => b.onclick = () => {
@@ -310,6 +326,7 @@ BQ.ui.openParty = function (p, defaults) {
   const collect = () => {
     const out = Object.assign({}, d, {
       name: $('#pfName').value.replace(/\s+/g, ' ').trim(),
+      badge: $('#pfBadge').value.replace(/[^0-9A-Za-z]/g, ''),
       type: (m.el.querySelector('#pfType .on') || {}).dataset ? m.el.querySelector('#pfType .on').dataset.v : 'Guest',
       aff: $('#pfAff').value.trim(),
       seats: Math.max(1, parseInt(seatsEl.value, 10) || 1),
@@ -323,6 +340,7 @@ BQ.ui.openParty = function (p, defaults) {
     out.vipCount = out.vip ? Math.max(1, parseInt($('#pfVipCount').value, 10) || out.seats) : 0;
     if (!out.vip) out.vipIn = 0;
     out.needs = d.needs.filter(n => !BQ.NEEDS[n.type].target || n.target || n.text);
+    if (!BQ.isOrg(out)) { const c = BQ.cleanPerson(out.name); if (c.badge && c.name) { out.name = c.name; if (!out.badge) out.badge = c.badge; } }
     return out;
   };
   async function save() {
@@ -337,15 +355,35 @@ BQ.ui.openParty = function (p, defaults) {
     }
     if (isNew) {
       out.checkedIn = 0;
+      const same = BQ.isOrg(out) ? [] : BQ.sameNameParties(out.name, out.badge, null);
+      if (same.length) {
+        const x = same[0];
+        const pick = await BQ.ui.choose('Same name already on the list',
+          '<b>' + BQ.esc(x.name) + '</b>' + (x.badge ? ' #' + BQ.esc(x.badge) : '') + ' is already on the guest list' + (x.aff ? ' (' + BQ.esc(x.aff) + ')' : '') +
+          (x.table ? ', at Table ' + BQ.esc(x.table) : ', not seated yet') + ', with ' + BQ.plural(x.seats, 'seat') + '.' + (same.length > 1 ? ' (' + (same.length - 1) + ' more with this name.)' : '') +
+          '<br><br>Is this the <b>same person</b>? Some employees share a first and last name.',
+          [{ label: 'Same person — open their record instead', value: 'same', cls: 'primary' }, { label: 'Different person — add a new guest', value: 'new' }, { label: 'Go back', value: null }]);
+        if (!pick) return false;
+        if (pick === 'same') { setTimeout(() => BQ.ui.openParty(BQ.partyById(x.id))); return true; }
+      }
       const ok = await BQ.commit('Added ' + out.name, [{ kind: 'party', before: null, after: out }]);
+      if (ok && same.length && out.id) await BQ.markNotDuplicates([out.id].concat(same.map(x => x.id)));
       if (ok) BQ.ui.toast('Added ' + out.name + (out.table ? ' at Table ' + out.table : ' to the waiting list'), 'ok');
       return ok;
     }
     return BQ.commit('Updated ' + out.name, [{ kind: 'party', before: BQ.clone(p), after: out }]);
   }
   if (!isNew) {
+    $('#pfMerge').onclick = () => { m.close(); BQ.mergePickDialog(p); };
     $('#pfDel').onclick = async () => {
-      if (!(await BQ.ui.confirm('Delete ' + p.name + ' (' + p.seats + ' seats)? You can Undo this.', 'Delete'))) return;
+      const linked = BQ.awardLinksTo(p.id);
+      if (linked.length) {
+        const pick = await BQ.ui.choose('This guest has ' + BQ.plural(linked.length, 'award'),
+          '<b>' + BQ.esc(p.name) + '</b> is linked to: ' + linked.map(a => BQ.esc(a.name || 'Award')).join(', ') + '.<br><br>If this is a <b>duplicate</b> of another record, use <b>Merge</b> so the awards move to the record you keep. Deleting leaves the awards with nobody linked.',
+          [{ label: 'Merge with another record instead…', value: 'merge', cls: 'primary' }, { label: 'Delete anyway', value: 'del', cls: 'danger' }, { label: 'Go back', value: null }]);
+        if (!pick) return;
+        if (pick === 'merge') { m.close(); BQ.mergePickDialog(p); return; }
+      } else if (!(await BQ.ui.confirm('Delete ' + p.name + ' (' + p.seats + ' seats)? You can Undo this.', 'Delete'))) return;
       m.close();
       BQ.commit('Deleted ' + p.name, [{ kind: 'party', before: BQ.clone(p), after: null }]);
     };
@@ -382,6 +420,10 @@ BQ.screens.home = {
     if (info.length) att.push(['requests', '📝', BQ.plural(info.length, 'reminder') + ' to check off']);
     if (BQ.config.trackPayment && s.unpaid) att.push(['guests', '💲', BQ.plural(s.unpaid, 'party').replace('partys', 'parties') + ' not marked paid']);
     if (unlinked) att.push(['awards', '🏆', BQ.plural(unlinked, 'award recipient') + ' not found on the guest list']);
+    const dups = BQ.findDuplicates().length;
+    if (dups) att.push(['dups', '👥', BQ.plural(dups, 'name') + ' on the guest list more than once (same person, or two people?)']);
+    const nameFix = BQ.scanNameFixes(false).filter(f => f.kind !== 'awardChange').length;
+    if (nameFix) att.push(['names', '#️⃣', BQ.plural(nameFix, 'name') + ' with a badge number stuck in the name']);
     main.innerHTML =
       '<div class="page">' +
       '<div class="hero"><div><h1>' + BQ.esc(e.title) + '</h1><div class="muted">' + (e.date ? new Date(e.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Date not set') +
@@ -403,7 +445,12 @@ BQ.screens.home = {
       (!s.parties ? '<div class="card"><h2>Getting started</h2><p>Add guests one at a time with <b>＋ Add a guest or group</b>, paste a list from Excel, or bring in last year’s spreadsheet from <a href="#" data-go="exports">Print &amp; Export → Import</a>.</p></div>' : '') +
       '</div>';
     main.querySelectorAll('[data-a]').forEach(b => b.onclick = () => b.dataset.a === 'add' ? BQ.ui.openParty(null) : BQ.ui.go(b.dataset.a));
-    main.querySelectorAll('[data-go]').forEach(a => a.onclick = ev => { ev.preventDefault(); BQ.ui.go(a.dataset.go); });
+    main.querySelectorAll('[data-go]').forEach(a => a.onclick = ev => {
+      ev.preventDefault();
+      if (a.dataset.go === 'dups') return BQ.duplicatesDialog();
+      if (a.dataset.go === 'names') return BQ.nameCleanupDialog();
+      BQ.ui.go(a.dataset.go);
+    });
   }
 };
 
@@ -422,7 +469,7 @@ BQ.screens.guests = {
       '<button class="btn" id="glPaste">📋 Paste a list…</button><button class="btn primary" id="glAdd">＋ Add guest or group</button></div>' +
       '<div class="toolbar"><input id="glQ" type="search" placeholder="Search names, units, notes…" value="' + BQ.esc(V.q) + '"/>' +
       '<div class="chips">' + filters.map(f => '<button data-f="' + f[0] + '" class="' + (V.filter === f[0] ? 'on' : '') + '">' + f[1] + '</button>').join('') + '</div></div>' +
-      '<div id="glBulk"></div><div id="glTable"></div></div>';
+      '<div id="glClean"></div><div id="glBulk"></div><div id="glTable"></div></div>';
     main.querySelector('#glAdd').onclick = () => BQ.ui.openParty(null);
     main.querySelector('#glPaste').onclick = () => BQ.imports.pasteDialog();
     main.querySelector('#glQ').oninput = e => { V.q = e.target.value; this.drawTable(); };
@@ -435,7 +482,7 @@ BQ.screens.guests = {
     if (!box) return;
     const q = V.q.toLowerCase();
     let rows = BQ.state.parties.filter(p => {
-      if (q && (p.name + ' ' + p.aff + ' ' + (p.guests || []).join(' ') + ' ' + p.notes + ' ' + p.payNote).toLowerCase().indexOf(q) < 0) return false;
+      if (q && (p.name + ' ' + (p.badge || '') + ' ' + p.aff + ' ' + (p.guests || []).join(' ') + ' ' + p.notes + ' ' + p.payNote).toLowerCase().indexOf(q) < 0) return false;
       switch (V.filter) {
         case 'waiting': return !p.table;
         case 'seated': return !!p.table;
@@ -458,6 +505,8 @@ BQ.screens.guests = {
     V.sel = V.sel || new Set();
     Array.from(V.sel).forEach(id => { if (!BQ.partyById(id)) V.sel.delete(id); });
     V.shown = rows.map(p => p.id);
+    const cb = document.getElementById('glClean');
+    if (cb) { cb.innerHTML = BQ.cleanupBannerHtml(); BQ.wireCleanupBanner(cb); }
     const allOn = rows.length > 0 && rows.every(p => V.sel.has(p.id));
     const th = (k, l, c) => '<th data-k="' + k + '" class="' + (c || '') + (V.sort === k ? ' sorted' : '') + '">' + l + (V.sort === k ? (V.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
     box.innerHTML = '<div class="muted small">' + rows.length + ' of ' + BQ.state.parties.length + ' parties · ' + seats + ' seats</div>' +
@@ -466,7 +515,7 @@ BQ.screens.guests = {
       rows.map(p => {
         const ti = BQ.typeInfo(p.type);
         const needs = (p.needs || []).map(n => { const r = BQ.checkNeed(p, n); return '<span class="need n-' + r.state + '" title="' + BQ.esc(BQ.needText(n) + ' — ' + r.msg) + '">' + (BQ.NEEDS[n.type] || {}).icon + '</span>'; }).join('');
-        return '<tr data-pid="' + p.id + '"' + (V.sel.has(p.id) ? ' class="picked"' : '') + '><td class="c"><input type="checkbox" data-sel' + (V.sel.has(p.id) ? ' checked' : '') + '/></td><td><b>' + BQ.esc(p.name) + '</b>' + (p.vip ? ' <span class="vipchip" title="VIP reception tickets">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + '</span>' : '') + (p.pinned ? ' 📌' : '') + (p.group ? ' <span class="muted" title="Split party">⛓</span>' : '') +
+        return '<tr data-pid="' + p.id + '"' + (V.sel.has(p.id) ? ' class="picked"' : '') + '><td class="c"><input type="checkbox" data-sel' + (V.sel.has(p.id) ? ' checked' : '') + '/></td><td><b>' + BQ.esc(p.name) + '</b>' + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + (p.vip ? ' <span class="vipchip" title="VIP reception tickets">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + '</span>' : '') + (p.pinned ? ' 📌' : '') + (p.group ? ' <span class="muted" title="Split party">⛓</span>' : '') +
           ((p.guests || []).length ? '<div class="muted small">' + BQ.esc(p.guests.join(', ')) + '</div>' : '') + '</td>' +
           '<td>' + ti.icon + ' ' + BQ.esc(ti.label) + '</td><td>' + BQ.esc(p.aff) + '</td><td class="c">' + p.seats + '</td>' +
           '<td class="c">' + (p.table ? '<b>' + BQ.esc(p.table) + '</b>' : '<button class="btn sm" data-find="' + p.id + '">Find a seat</button>') + '</td>' +
@@ -509,6 +558,148 @@ BQ.recipientPartyIds = function () {
   const ids = new Set();
   BQ.state.awards.forEach(a => (a.recipients || []).forEach(r => { if (r.pid && BQ.partyById(r.pid)) ids.add(r.pid); }));
   return ids;
+};
+
+/* ---------------------------------------------------------------------
+   DUPLICATES & MERGING — one person on the list twice
+   --------------------------------------------------------------------- */
+BQ.partySummaryHtml = function (p) {
+  const aw = BQ.awardLinksTo(p.id);
+  return '<b>' + BQ.esc(p.name) + '</b>' + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') +
+    '<div class="muted small">' + [BQ.typeInfo(p.type).icon + ' ' + BQ.esc(BQ.typeInfo(p.type).label), p.aff ? BQ.esc(p.aff) : '', BQ.plural(p.seats, 'seat'),
+      p.table ? 'Table ' + BQ.esc(p.table) : 'not seated', p.vip ? '⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') : '', p.pinned ? '📌 locked' : ''].filter(Boolean).join(' · ') + '</div>' +
+    (aw.length ? '<div class="small">🏆 ' + aw.map(a => BQ.esc(a.name || 'Award')).join(', ') + '</div>' : '') +
+    ((p.guests || []).length ? '<div class="muted small">Guests: ' + BQ.esc(p.guests.join(', ')) + '</div>' : '') +
+    (p.notes ? '<div class="muted small">Notes: ' + BQ.esc(p.notes) + '</div>' : '');
+};
+
+/* Combine 2+ records: pick the one to keep; everything else folds into it */
+BQ.mergeDialog = function (parties, onDone) {
+  parties = parties.filter(Boolean);
+  if (parties.length < 2) return;
+  const score = p => (p.table ? 100 : 0) + BQ.awardLinksTo(p.id).length * 10 + (p.badge ? 5 : 0) + (p.needs || []).length;
+  let keep = parties.slice().sort((a, b) => score(b) - score(a))[0].id;
+  const maxSeats = Math.max.apply(null, parties.map(p => p.seats || 1));
+  const total = parties.reduce((s, p) => s + (p.seats || 0), 0);
+  const tables = Array.from(new Set(parties.map(p => p.table).filter(Boolean)));
+  const m = BQ.ui.modal({
+    title: 'Merge into one guest', wide: true,
+    body: '<p>These records will become <b>one</b>. Choose the record to keep. Its name and table stay. Awards, special requests, guest names, VIP tickets and notes from the other ' + (parties.length > 2 ? 'records' : 'record') + ' are added to it, and the extra record is removed.</p>' +
+      '<div class="mergelist">' + parties.map(p => '<label class="mergerow"><input type="radio" name="mgKeep" value="' + p.id + '"' + (p.id === keep ? ' checked' : '') + '/><div>' + BQ.partySummaryHtml(p) + '</div></label>').join('') + '</div>' +
+      (tables.length > 1 ? '<p class="warn small">These records are at different tables (' + tables.map(BQ.esc).join(', ') + '). The merged guest stays at the kept record’s table.</p>' : '') +
+      '<div class="field"><label>Seats for the merged guest</label><input id="mgSeats" type="number" min="1" value="' + maxSeats + '" style="width:90px"/> ' +
+      '<span class="muted small">Same person listed twice? Keep the larger number (' + maxSeats + '). Added together it would be ' + total + '.</span></div>',
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Merge', cls: 'primary', onClick: async mm => {
+        keep = Number(mm.el.querySelector('[name=mgKeep]:checked').value);
+        const seats = Math.max(1, parseInt(mm.el.querySelector('#mgSeats').value, 10) || maxSeats);
+        const k = BQ.partyById(keep);
+        const n = BQ.state.awards.filter(a => (a.recipients || []).some(r => parties.some(p => p.id !== keep && r.pid === p.id))).length;
+        const ok = await BQ.mergeParties(keep, parties.filter(p => p.id !== keep).map(p => p.id), seats);
+        if (ok) BQ.ui.toast('Merged into ' + (k ? k.name : 'one guest') + (n ? ' · ' + BQ.plural(n, 'award') + ' moved to this record' : ''), 'ok', { label: 'Undo', onClick: () => BQ.undo() });
+        if (ok && onDone) setTimeout(onDone);
+        return ok;
+      }
+    }]
+  });
+  return m;
+};
+
+/* Merge from a guest's record: pick the other record */
+BQ.mergePickDialog = function (p) {
+  const key = BQ.personKey(p.name);
+  const others = BQ.state.parties.filter(x => x.id !== p.id);
+  const likely = others.filter(x => BQ.personKey(x.name) === key || (key && BQ.personKey(x.name).split(' ').pop() === key.split(' ').pop()));
+  const m = BQ.ui.modal({
+    title: 'Merge ' + p.name + ' with…', wide: true,
+    body: '<p>Pick the <b>other record for the same person</b>. You’ll choose which one to keep next.</p>' +
+      '<input id="mpQ" type="search" class="block" placeholder="Search by name, badge or unit"/><div id="mpList" class="picklist"></div>',
+    buttons: [{ label: 'Cancel' }]
+  });
+  const draw = () => {
+    const q = m.el.querySelector('#mpQ').value.trim().toLowerCase();
+    const list = (q ? others.filter(x => (x.name + ' ' + (x.badge || '') + ' ' + x.aff).toLowerCase().indexOf(q) >= 0) : likely).slice(0, 15);
+    m.el.querySelector('#mpList').innerHTML = list.length ? list.map(x => '<button class="pickrow" data-id="' + x.id + '">' + BQ.partySummaryHtml(x) + '</button>').join('') :
+      '<p class="muted">' + (q ? 'No guests match.' : 'No similar names found. Type to search.') + '</p>';
+    m.el.querySelectorAll('.pickrow').forEach(b => b.onclick = () => { m.close(); BQ.mergeDialog([p, BQ.partyById(Number(b.dataset.id))]); });
+  };
+  m.el.querySelector('#mpQ').oninput = draw;
+  draw();
+  setTimeout(() => m.el.querySelector('#mpQ').focus(), 40);
+};
+
+/* Review every name that appears more than once */
+BQ.duplicatesDialog = function () {
+  const m = BQ.ui.modal({ title: 'Same name, more than once', wide: true, body: '<div id="dupBody"></div>', buttons: [{ label: 'Done', cls: 'primary' }] });
+  const draw = () => {
+    const box = m.el.querySelector('#dupBody');
+    if (!box) return;
+    const groups = BQ.findDuplicates();
+    if (!groups.length) { box.innerHTML = '<p class="ok">✓ No duplicate names to review.</p>'; return; }
+    box.innerHTML = '<p>Each group below has the <b>same name</b> on more than one guest record. For each one, decide: is it <b>the same person</b> (merge them into one) or <b>different people</b> who share a name (keep both)?</p>' +
+      groups.map((g, i) => '<div class="dupgroup"><div class="dg-recs">' + g.parties.map(p => '<div class="dg-rec">' + BQ.partySummaryHtml(p) + '</div>').join('') + '</div>' +
+        (g.differentBadges ? '<p class="small warn">Different badge numbers — probably different people.</p>' : '') +
+        '<div class="dg-act"><button class="btn sm primary" data-merge="' + i + '">Same person — merge…</button><button class="btn sm" data-diff="' + i + '">Different people — keep both</button></div></div>').join('');
+    box.querySelectorAll('[data-merge]').forEach(b => b.onclick = () => BQ.mergeDialog(groups[Number(b.dataset.merge)].parties, draw));
+    box.querySelectorAll('[data-diff]').forEach(b => b.onclick = async () => {
+      const g = groups[Number(b.dataset.diff)];
+      if (await BQ.markNotDuplicates(g.parties.map(p => p.id), { undo: true, label: 'Marked ' + g.parties[0].name + ' as different people' })) { BQ.ui.toast('Okay — kept as different people.', 'ok'); draw(); }
+    });
+  };
+  draw();
+  return m;
+};
+
+/* One-time clean-up of names: pull badges out, optionally fix ALL CAPS */
+BQ.nameCleanupDialog = function () {
+  const noCol = !BQ.fieldOk('Banquet_Parties', 'Badge');
+  const m = BQ.ui.modal({
+    title: 'Clean up names & badge numbers', wide: true,
+    body: '<p>This moves badge numbers out of names (<b>CARLOS GOMEZ #12963</b> → name <b>Carlos Gomez</b>, badge <b>12963</b>) on the guest list and the awards list. Exports then show first and last names correctly.</p>' +
+      '<label class="chk"><input type="checkbox" id="ncCaps" checked/> Also change ALL-CAPS names to normal capitals (CARLOS GOMEZ → Carlos Gomez)</label>' +
+      (noCol ? '<p class="small muted">Note: your guest list in SharePoint has no <b>Badge</b> column yet, so guest badges are kept at the end of the name behind the scenes. Adding the column is recommended (see Settings).</p>' : '') +
+      '<div id="ncList"></div>',
+    buttons: [{ label: 'Cancel' }, { label: 'Fix names', cls: 'primary', onClick: () => apply() }]
+  });
+  let fixes = [];
+  const draw = () => {
+    fixes = BQ.scanNameFixes(m.el.querySelector('#ncCaps').checked);
+    const shown = fixes.filter(f => f.kind !== 'awardChange');
+    m.el.querySelector('#ncList').innerHTML = shown.length ?
+      '<p><b>' + BQ.plural(shown.length, 'name') + '</b> will change:</p><div class="tablewrap" style="max-height:340px"><table class="grid"><thead><tr><th>Where</th><th>Now</th><th>Becomes</th></tr></thead><tbody>' +
+      shown.slice(0, 400).map(f => '<tr><td>' + (f.kind === 'party' ? '👤 Guest' : '🏆 Award') + '</td><td>' + BQ.esc(f.label) + '</td><td><b>' + BQ.esc(f.to) + '</b></td></tr>').join('') + '</tbody></table></div>' :
+      '<p class="ok">✓ Nothing to fix. Names and badges are already separate.</p>';
+    m.el.querySelector('.modal-foot .primary').disabled = !shown.length;
+  };
+  m.el.querySelector('#ncCaps').onchange = draw;
+  draw();
+  async function apply() {
+    const changes = fixes.filter(f => f.change).map(f => f.change);
+    if (!changes.length) return true;
+    const since = BQ.history.length;
+    const ok = await BQ.commit('Cleaned up ' + BQ.plural(fixes.filter(f => f.kind !== 'awardChange').length, 'name'), changes);
+    if (!ok) return false;
+    const n = BQ.relinkableRecipients().length;
+    if (n) await BQ.relinkRecipients();
+    BQ.mergeHistory(since, 'Cleaned up names & badges');
+    const d = BQ.findDuplicates().length;
+    BQ.ui.toast('Names cleaned up' + (n ? ' · ' + BQ.plural(n, 'award recipient') + ' linked to the guest list' : '') + (d ? ' · ' + BQ.plural(d, 'name') + ' appear more than once' : ''), 'ok',
+      d ? { label: 'Review duplicates', onClick: () => BQ.duplicatesDialog() } : { label: 'Undo', onClick: () => BQ.undo() });
+    return true;
+  }
+};
+
+/* Small banner used on the Guest List and Awards screens */
+BQ.cleanupBannerHtml = function () {
+  const d = BQ.findDuplicates().length;
+  const n = BQ.scanNameFixes(false).filter(f => f.kind !== 'awardChange').length;
+  if (!d && !n) return '';
+  return '<div class="card warnbox cleanbar">' +
+    (d ? '<span>👥 <b>' + BQ.plural(d, 'name') + '</b> ' + (d === 1 ? 'appears' : 'appear') + ' more than once.</span><button class="btn sm" data-clean="dups">Review duplicates</button>' : '') +
+    (n ? '<span>#️⃣ <b>' + BQ.plural(n, 'name') + '</b> ' + (n === 1 ? 'has' : 'have') + ' a badge number stuck in the name.</span><button class="btn sm" data-clean="names">Clean up names</button>' : '') + '</div>';
+};
+BQ.wireCleanupBanner = function (root) {
+  root.querySelectorAll('[data-clean]').forEach(b => b.onclick = () => b.dataset.clean === 'dups' ? BQ.duplicatesDialog() : BQ.nameCleanupDialog());
 };
 
 /* ---------------------------------------------------------------------
@@ -855,7 +1046,9 @@ BQ.screens.settings = {
       '<div class="field"><label>Sort people in A–Z lists by</label><div class="seg" id="stSort"><button data-v="last" class="' + (s.sortBy !== 'first' ? 'on' : '') + '">Last name</button><button data-v="first" class="' + (s.sortBy === 'first' ? 'on' : '') + '">First name</button></div></div>' +
       '</div>' +
       '<div class="card"><h2>Look &amp; feel</h2><p class="muted small">Pick a color tone, a background (or your own photo), and text size. Saved on this computer.</p><button class="btn primary" id="stLook">🎨 Change the look…</button></div>' +
-      '<div class="card"><h2>Phone check-in</h2><p class="muted small">Staff scan a QR code with their phone camera, sign in with their City account, and get a phone-sized check-in screen (banquet and VIP reception).</p>' +
+      '<div class="card"><h2>Data clean-up</h2><p class="muted small">Pull badge numbers out of names (CARLOS GOMEZ #12963 → Carlos Gomez, badge 12963), and review names that appear more than once. Every fix can be undone.</p>' +
+      '<div class="row gap"><button class="btn" id="stNames">#️⃣ Clean up names &amp; badges…</button><button class="btn" id="stDups">👥 Check for duplicate names…</button><button class="btn" id="stRelink">🔗 Re-link award recipients</button></div></div>' +
+            '<div class="card"><h2>Phone check-in</h2><p class="muted small">Staff scan a QR code with their phone camera, sign in with their City account, and get a phone-sized check-in screen (banquet and VIP reception).</p>' +
       '<div class="row gap"><button class="btn" id="stQr">📱 Show the QR code</button><button class="btn" id="stQrPrint">🖨 Print a QR sign</button></div></div>' +
       '<div class="card"><h2>Events</h2><p class="muted small">Each year is its own event with its own room, guests and awards. Switch events from the menu at the top.</p>' +
       '<button class="btn" id="stNew">＋ New event…</button></div>' +
@@ -873,6 +1066,13 @@ BQ.screens.settings = {
     main.querySelector('#stNew').onclick = () => BQ.newEventDialog();
     main.querySelector('#stLook').onclick = () => BQ.look.dialog();
     main.querySelector('#stQr').onclick = () => BQ.phoneDialog();
+    main.querySelector('#stNames').onclick = () => BQ.nameCleanupDialog();
+    main.querySelector('#stDups').onclick = () => BQ.duplicatesDialog();
+    main.querySelector('#stRelink').onclick = async () => {
+      const n = BQ.relinkableRecipients().length;
+      if (!n) { BQ.ui.toast('Every award recipient that matches a guest is already linked.'); return; }
+      if (await BQ.relinkRecipients()) BQ.ui.toast('Linked ' + BQ.plural(n, 'award recipient') + ' to the guest list', 'ok');
+    };
     main.querySelector('#stQrPrint').onclick = () => BQ.exports.printQrSign();
     main.querySelector('#stLog').onclick = async () => {
       const box = main.querySelector('#stLogBox');
@@ -912,7 +1112,7 @@ BQ.manualSpec = function (rep) {
     DateTime: 'Date and time, <b>Include time: Yes</b>',
     Boolean: 'Yes/No (default No)'
   };
-  const rows = (rep || []).filter(r => !r.exists || r.missing.length);
+  const rows = (rep || []).filter(r => !r.exists || r.missing.length || (r.optMissing || []).length).map(r => Object.assign({}, r, { missing: r.missing.concat(r.optMissing || []) }));
   if (!rows.length) return '<p class="ok">Nothing is missing.</p>';
   return '<div class="manual-spec"><p class="small muted">Type each column name exactly as shown (no spaces, same capitals) when you first create it. Leave every column not required. Keep the built-in Title column.</p>' +
     rows.map(r => '<h4>' + (r.exists ? 'Add to list ' : 'Create list ') + '<code>' + r.list + '</code>' + (r.exists ? '' : ' (blank list)') + '</h4>' +
@@ -926,9 +1126,12 @@ BQ.setupPanel = async function (box, onReady) {
   let rep;
   try { rep = await BQ.SPStore.health(); } catch (e) { box.innerHTML = '<p class="bad">Couldn’t reach SharePoint: ' + BQ.esc(e.message) + '</p>'; return false; }
   const ok = rep.every(r => r.exists && !r.missing.length && !r.error);
+  const optMissing = rep.some(r => (r.optMissing || []).length);
   box.innerHTML = '<table class="grid"><thead><tr><th>List</th><th>Status</th></tr></thead><tbody>' + rep.map(r => '<tr><td>' + r.list + '</td><td>' +
     (r.error ? '<span class="bad">' + BQ.esc(r.error) + '</span>' : !r.exists ? '<span class="bad">Missing list</span>' : r.missing.length ? '<span class="bad">Missing: ' + r.missing.join(', ') + '</span>' : '<span class="ok">✓ Ready</span>') +
+    ((r.optMissing || []).length && r.exists ? ' <span class="warn">· Recommended: add ' + r.optMissing.join(', ') + '</span>' : '') +
     '</td></tr>').join('') + '</tbody></table>' +
+    (ok && optMissing ? '<p class="warn">Recommended: add the column(s) above (Single line of text) so badge numbers are saved. Everything else works without it.</p>' + BQ.manualSpec(rep) : '') +
     (ok ? '<p class="ok">✓ Everything is set up.</p>' + (onReady ? '<button class="btn primary" id="spGo">Continue</button>' : '') :
       '<p>The app can create the missing lists and columns for you. You need to be an owner of the SharePoint site.</p><button class="btn primary" id="spFix">Create missing lists &amp; columns</button><div id="spProg" class="muted small"></div>');
   const fix = box.querySelector('#spFix');
@@ -1088,6 +1291,8 @@ BQ.start = async function (mode) {
   try { id = Number(localStorage.getItem('bq_event')); } catch (e) { /* ignore */ }
   if (!st.events.some(e => e.id === id)) id = st.events.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)))[0].id;
   await BQ.openEvent(id);
+  if (st.store.kind === 'sharepoint' && !BQ.fieldOk('Banquet_Parties', 'Badge') && !document.body.classList.contains('kiosk'))
+    setTimeout(() => BQ.ui.toast('Tip: add a “Badge” column (Single line of text) to the Banquet_Parties list so badge numbers get their own column. See Settings → SharePoint setup.'), 1500);
 };
 
 BQ.boot = async function () {

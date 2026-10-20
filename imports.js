@@ -168,7 +168,7 @@ IM.classicPreview = function (fname, sheets, idx) {
         const keepHolds = m.el.querySelector('#icHolds').checked;
         const changes = res.parties.filter(p => !dups.includes(p)).map(p => ({
           kind: 'party', before: null, after: {
-            name: p.name, type: IM.guessType(p.name), aff: '', seats: p.seats, table: known.has(String(p.table)) ? String(p.table) : '',
+            name: IM.guessType(p.name) === 'Guest' ? (BQ.cleanPerson(p.name).name || p.name) : p.name, badge: IM.guessType(p.name) === 'Guest' ? BQ.cleanPerson(p.name).badge : '', type: IM.guessType(p.name), aff: '', seats: p.seats, table: known.has(String(p.table)) ? String(p.table) : '',
             guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: [p.note, known.has(String(p.table)) ? '' : 'Was at Table ' + p.table + ' in the imported sheet'].filter(Boolean).join('. '),
             checkedIn: 0, pinned: false, group: ''
           }
@@ -265,7 +265,7 @@ IM.awardsDialog = async function () {
   }
   const people = res.awards.reduce((n, a) => n + a.recipients.length, 0);
   let matched = 0;
-  res.awards.forEach(a => a.recipients.forEach(r => { const p = BQ.findPartyForName(r.name); r.pid = p ? p.id : null; if (p) matched++; }));
+  res.awards.forEach(a => a.recipients.forEach(r => { const p = BQ.findPartyForName(r.name, r.badge); r.pid = p ? p.id : null; if (p) matched++; }));
   const existing = BQ.state.awards.length;
   const segRows = res.segments.map(sg => {
     const list = res.awards.filter(a => a.segment === sg);
@@ -303,7 +303,7 @@ IM.awardsDialog = async function () {
           BQ.state.awards.filter(a => newIds.has(a.id)).forEach(a => (a.recipients || []).forEach(r => { if (!(r.pid && BQ.partyById(r.pid))) items.push({ a, r }); }));
           const ppl = [];
           items.forEach(it => {
-            const key = (it.r.name + '|' + (it.r.badge || '')).toLowerCase();
+            const key = BQ.recipKey(it.r);
             let p = ppl.find(x => x.key === key);
             if (!p) { p = { key, r: it.r, awards: [] }; ppl.push(p); }
             p.awards.push(it.a);
@@ -377,10 +377,8 @@ IM.parseHonorRecipient = function (line) {
   let rank = '';
   const rm = t.match(IM.RANK_PREFIX);
   if (rm) { rank = rm[0].trim(); t = t.slice(rm[0].length).trim(); }
-  let badge = '';
-  const bm = t.match(/\s*[#(]\s*(\d{3,7})\)?\s*$/);
-  if (bm) { badge = bm[1]; t = t.slice(0, bm.index).trim(); }
-  return { rank, name: t.replace(/,$/, ''), badge, unit, count: 1 };
+  const c = BQ.cleanPerson(t.replace(/,$/, ''));
+  return { rank, name: c.name, badge: c.badge, unit, count: 1 };
 };
 
 IM.parseHonors = function (lines) {
@@ -435,7 +433,7 @@ IM.honorsPreview = function (res, source) {
   const awards = res.awards.filter(a => a.recipients.length);
   if (!awards.length) { BQ.ui.toast('No award headings with names under them were found.', 'bad'); return; }
   let matched = 0, people = 0;
-  awards.forEach(a => a.recipients.forEach(r => { people++; const p = BQ.findPartyForName(r.name); r.pid = p ? p.id : null; if (p) matched++; }));
+  awards.forEach(a => a.recipients.forEach(r => { people++; const p = BQ.findPartyForName(r.name, r.badge); r.pid = p ? p.id : null; if (p) matched++; }));
   const segDefault = 'Highest Honors';
   const existing = BQ.state.awards.filter(a => (a.segment || '').toLowerCase() === segDefault.toLowerCase());
   const empty = res.awards.filter(a => !a.recipients.length);
@@ -488,7 +486,7 @@ IM.honorsPreview = function (res, source) {
           const ppl = [];
           BQ.state.awards.filter(a => ids.has(a.id)).forEach(a => (a.recipients || []).forEach(r => {
             if (r.pid && BQ.partyById(r.pid)) return;
-            const key = (r.name + '|' + (r.badge || '')).toLowerCase();
+            const key = BQ.recipKey(r);
             let p = ppl.find(x => x.key === key);
             if (!p) { p = { key, r, awards: [] }; ppl.push(p); }
             p.awards.push(a);
@@ -524,7 +522,8 @@ IM.parsePaste = function (text) {
   if (h.some(x => /name/.test(x)) && h.some(x => /seat|#|count|qty|number of/.test(x) || /table/.test(x))) {
     map = {};
     h.forEach((x, i) => {
-      if (map.name == null && /name|attend|guest/.test(x)) map.name = i;
+      if (map.badge == null && /badge|employee\s*(id|#|no)/.test(x)) map.badge = i;
+      else if (map.name == null && /name|attend|guest/.test(x)) map.name = i;
       else if (map.seats == null && /seat|#|count|qty/.test(x)) map.seats = i;
       else if (map.table == null && /table/.test(x)) map.table = i;
       else if (map.aff == null && /unit|org|affil|division|agency/.test(x)) map.aff = i;
@@ -541,8 +540,10 @@ IM.parsePaste = function (text) {
   }
   const get = (r, k) => map[k] == null ? '' : String(r[map[k]] == null ? '' : r[map[k]]).trim();
   return rows.map(r => {
-    const name = get(r, 'name').replace(/\s+/g, ' ');
+    let name = get(r, 'name').replace(/\s+/g, ' ');
     if (!name) return null;
+    let badge = get(r, 'badge').replace(/[^0-9A-Za-z]/g, '');
+    if (IM.guessType(name) === 'Guest') { const c = BQ.cleanPerson(name); if (c.name) { name = c.name; badge = badge || c.badge; } }
     const t = get(r, 'table').replace(/^table\s*/i, '').replace(/\*$/, '');
     const typeTxt = get(r, 'type').toLowerCase();
     const type = (BQ.PARTY_TYPES.find(x => typeTxt && (x.k.toLowerCase() === typeTxt || x.label.toLowerCase().indexOf(typeTxt) >= 0)) || {}).k || IM.guessType(name);
@@ -553,7 +554,7 @@ IM.parsePaste = function (text) {
     return {
       vip, vipCount: vip && /^\d+$/.test(vipTxt) ? Number(vipTxt) : 0,
       seatsGiven: parseInt(get(r, 'seats'), 10) > 0, vipGiven: map.vip != null && vipTxt !== '',
-      name, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff: get(r, 'aff'), type, pay,
+      name, badge, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff: get(r, 'aff'), type, pay,
       guests: get(r, 'guests').split(/[;\n]/).map(s => s.trim()).filter(Boolean), notes: get(r, 'notes'), phone: get(r, 'phone'), email: get(r, 'email')
     };
   }).filter(Boolean);
@@ -577,7 +578,7 @@ IM.pasteDialog = function () {
         const vipDef = IM.readVip(m.el, 'ppVip');
         const changes = rows.map(r => ({
           kind: 'party', before: null, after: {
-            name: r.name, type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
+            name: r.name, badge: r.badge || '', type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
             phone: r.phone, email: r.email, notes: [r.notes, r.table && !known.has(r.table) ? 'Asked for Table ' + r.table + ' (not in the room)' : ''].filter(Boolean).join('. '), checkedIn: 0, pinned: false, group: '',
             vip: r.vip, vipCount: r.vipCount, vipIn: 0
           }
@@ -592,8 +593,10 @@ IM.pasteDialog = function () {
   const ta = m.el.querySelector('#ppText');
   ta.oninput = () => {
     rows = IM.parsePaste(ta.value);
-    m.el.querySelector('#ppPrev').innerHTML = rows.length ? '<p><b>' + rows.length + '</b> guests, <b>' + rows.reduce((s, r) => s + r.seats, 0) + '</b> seats:</p><div class="scroll-box"><table class="grid"><thead><tr><th>Name</th><th>Seats</th><th>Table</th><th>Unit / org</th><th>Type</th></tr></thead><tbody>' +
-      rows.map(r => '<tr><td>' + BQ.esc(r.name) + '</td><td class="c">' + r.seats + '</td><td class="c">' + BQ.esc(r.table) + '</td><td>' + BQ.esc(r.aff) + '</td><td>' + BQ.typeInfo(r.type).icon + ' ' + BQ.esc(BQ.typeInfo(r.type).label) + '</td></tr>').join('') + '</tbody></table></div>' : '';
+    const already = rows.filter(r => r.type === 'Guest' && BQ.sameNameParties(r.name, r.badge, null).length);
+    m.el.querySelector('#ppPrev').innerHTML = rows.length ? '<p><b>' + rows.length + '</b> guests, <b>' + rows.reduce((s, r) => s + r.seats, 0) + '</b> seats:</p>' +
+      (already.length ? '<p class="warn small">👥 ' + BQ.plural(already.length, 'name') + ' already on the guest list (' + already.slice(0, 5).map(r => BQ.esc(r.name)).join(', ') + (already.length > 5 ? '…' : '') + '). After adding, use <b>Review duplicates</b> on the Guest List to merge the same person or keep two different people.</p>' : '') + '<div class="scroll-box"><table class="grid"><thead><tr><th>Name</th><th>Seats</th><th>Table</th><th>Unit / org</th><th>Type</th></tr></thead><tbody>' +
+      rows.map(r => '<tr><td>' + BQ.esc(r.name) + (r.badge ? ' <span class="badgechip">#' + BQ.esc(r.badge) + '</span>' : '') + '</td><td class="c">' + r.seats + '</td><td class="c">' + BQ.esc(r.table) + '</td><td>' + BQ.esc(r.aff) + '</td><td>' + BQ.typeInfo(r.type).icon + ' ' + BQ.esc(BQ.typeInfo(r.type).label) + '</td></tr>').join('') + '</tbody></table></div>' : '';
   };
   setTimeout(() => ta.focus(), 40);
 };

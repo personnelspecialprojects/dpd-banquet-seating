@@ -208,7 +208,7 @@ X.alphaRows = function () {
     if (x.org) party = BQ.typeInfo(p.type).label + ' (' + p.seats + ' seats)';
     else if (x.leader) party = p.seats > 1 ? 'Party of ' + p.seats : '';
     else party = 'Guest of ' + p.name;
-    return { key: BQ.sortKey(x.name, x.org), first: n.first, last: n.last, name: x.name, table: p.table || '', party, seats: x.leader ? p.seats : '', p, leader: x.leader, org: x.org };
+    return { key: BQ.sortKey(x.name, x.org), first: n.first, last: n.last, badge: x.org ? '' : x.leader ? (p.badge || BQ.cleanPerson(x.name).badge) : BQ.cleanPerson(x.name).badge, name: x.name, table: p.table || '', party, seats: x.leader ? p.seats : '', p, leader: x.leader, org: x.org };
   });
   // reserved blocks (e.g. FDP Sponsors) get one line listing their tables
   BQ.reservations().forEach(b => rows.push({ key: BQ.sortKey(b.label, true), first: '', last: b.label, name: b.label, table: b.tables.join(', '),
@@ -221,27 +221,28 @@ X.alphaXlsx = async function () {
   if (!X.needExcel()) return;
   const wb = X.newBook();
   const ws = wb.addWorksheet('Alphabetical', { views: [{ state: 'frozen', ySplit: 3 }] });
-  ws.columns = [{ width: 24 }, { width: 22 }, { width: 10 }, { width: 38 }, { width: 10 }, { width: 10 }];
-  X.title(ws, BQ.state.event.title + ' — Alphabetical List', 'Printed ' + new Date().toLocaleString(), 6);
-  X.header(ws, 3, ['Last Name', 'First Name', 'Table', 'Party / Group', 'Seats', 'VIP tickets']);
+  ws.columns = [{ width: 24 }, { width: 22 }, { width: 10 }, { width: 10 }, { width: 38 }, { width: 10 }, { width: 10 }];
+  X.title(ws, BQ.state.event.title + ' — Alphabetical List', 'Printed ' + new Date().toLocaleString(), 7);
+  X.header(ws, 3, ['Last Name', 'First Name', 'Badge', 'Table', 'Party / Group', 'Seats', 'VIP tickets']);
   let r = 4, letter = '';
   X.alphaRows().forEach(x => {
     const L = (x.key[0] || '#').toUpperCase();
     if (L !== letter) {
       letter = L;
-      ws.mergeCells(r, 1, r, 6);
+      ws.mergeCells(r, 1, r, 7);
       const c = ws.getCell(r, 1);
       c.value = L; c.font = { bold: true, size: 13, color: { argb: 'FF1F3A5F' } }; c.fill = X.fill('FFDCE6F2');
       r++;
     }
     const row = ws.getRow(r);
-    row.values = [x.last, x.first, x.table || 'Not seated', x.party, x.seats, x.p.vip && (x.leader || x.block) ? BQ.vipCount(x.p) : (x.p.vip ? '★' : '')];
-    row.getCell(6).alignment = { horizontal: 'center' };
+    row.values = [x.last, x.first, x.badge || '', x.table || 'Not seated', x.party, x.seats, x.p.vip && (x.leader || x.block) ? BQ.vipCount(x.p) : (x.p.vip ? '★' : '')];
+    row.getCell(7).alignment = { horizontal: 'center' };
     row.font = { size: 12 };
-    row.getCell(3).font = { size: 14, bold: true, color: { argb: x.table ? 'FF000000' : 'FFC00000' } };
     row.getCell(3).alignment = { horizontal: 'center' };
-    row.getCell(5).alignment = { horizontal: 'center' };
-    [1, 2, 3, 4, 5, 6].forEach(i => { row.getCell(i).border = { bottom: { style: 'hair', color: { argb: 'FFBBBBBB' } } }; });
+    row.getCell(4).font = { size: 14, bold: true, color: { argb: x.table ? 'FF000000' : 'FFC00000' } };
+    row.getCell(4).alignment = { horizontal: 'center' };
+    row.getCell(6).alignment = { horizontal: 'center' };
+    [1, 2, 3, 4, 5, 6, 7].forEach(i => { row.getCell(i).border = { bottom: { style: 'hair', color: { argb: 'FFBBBBBB' } } }; });
     r++;
   });
   X.printSetup(ws, 'portrait', '3:3');

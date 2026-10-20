@@ -21,7 +21,8 @@ BQ.schema = {
     ['TableNo', 'Text'], ['GroupKey', 'Text'], ['ContactPhone', 'Text'], ['ContactEmail', 'Text'],
     ['PaymentStatus', 'Text', 'pay'], ['PaymentNote', 'Text', 'pay'], ['NeedsJson', 'Note'], ['PartyNotes', 'Note'],
     ['GuestNames', 'Note'], ['CheckedIn', 'Number'], ['CheckInTime', 'DateTime'], ['Pinned', 'Boolean'],
-    ['VipReception', 'Boolean'], ['VipCount', 'Number'], ['VipCheckedIn', 'Number']
+    ['VipReception', 'Boolean'], ['VipCount', 'Number'], ['VipCheckedIn', 'Number'],
+    ['Badge', 'Text', 'opt']   // optional: the app works without it, but badge numbers aren't saved
   ],
   Banquet_Awards: [
     ['EventId', 'Number'], ['AwardCategory', 'Text'], ['AwardKind', 'Text'], ['ProgramOrder', 'Number'],
@@ -35,6 +36,13 @@ BQ.schema = {
 
 // columns tagged 'pay' only exist when payment tracking is turned on
 Object.keys(BQ.schema).forEach(l => { BQ.schema[l] = BQ.schema[l].filter(f => f[2] !== 'pay' || BQ.config.trackPayment); });
+
+// Is this (optional) column available? Practice mode: always. SharePoint: only if the health check saw it.
+BQ.fieldOk = function (list, name) {
+  if (!BQ.state || !BQ.state.store || BQ.state.store.kind !== 'sharepoint') return true;
+  const have = BQ.SPStore._have[list];
+  return !!(have && have.has(name));
+};
 
 BQ.fieldXml = function (name, type) {
   const base = 'DisplayName="' + name + '" Name="' + name + '" StaticName="' + name + '"';
@@ -78,18 +86,26 @@ BQ.map_ = {
       pay: it.PaymentStatus || '', payNote: it.PaymentNote || '', needs: jparse(it.NeedsJson, []),
       notes: it.PartyNotes || '', guests: lines(it.GuestNames), checkedIn: Number(it.CheckedIn) || 0,
       checkInTime: it.CheckInTime || '', pinned: !!it.Pinned,
-      vip: !!it.VipReception, vipCount: Number(it.VipCount) || 0, vipIn: Number(it.VipCheckedIn) || 0
+      vip: !!it.VipReception, vipCount: Number(it.VipCount) || 0, vipIn: Number(it.VipCheckedIn) || 0,
+      badge: it.Badge || ''
     };
+  },
+  // Without a Badge column the badge rides along at the end of the name ("Carlos Gomez #12963")
+  partyFromFixed(it) {
+    const p = BQ.map_.partyFrom(it);
+    if (!BQ.fieldOk('Banquet_Parties', 'Badge')) { const m = p.name.match(/^(.*\S)\s+#([0-9A-Za-z]{1,10})$/); if (m) { p.name = m[1]; p.badge = p.badge || m[2]; } }
+    return p;
   },
   partyTo(p) {
     return Object.assign({
-      Title: p.name || '(no name)', EventId: p.eventId, PartyType: p.type || 'Guest', Affiliation: p.aff || '',
+      Title: (p.name || '(no name)') + (p.badge && !BQ.fieldOk('Banquet_Parties', 'Badge') ? ' #' + p.badge : ''), EventId: p.eventId, PartyType: p.type || 'Guest', Affiliation: p.aff || '',
       Seats: Number(p.seats) || 0, TableNo: p.table ? String(p.table) : '', GroupKey: p.group || '',
       ContactPhone: p.phone || '', ContactEmail: p.email || '', NeedsJson: JSON.stringify(p.needs || []), PartyNotes: p.notes || '',
       GuestNames: (p.guests || []).join('\n'), CheckedIn: Number(p.checkedIn) || 0,
       CheckInTime: p.checkInTime || null, Pinned: !!p.pinned,
       VipReception: !!p.vip, VipCount: Number(p.vipCount) || 0, VipCheckedIn: Number(p.vipIn) || 0
-    }, BQ.config.trackPayment ? { PaymentStatus: p.pay || '', PaymentNote: p.payNote || '' } : {});
+    }, BQ.config.trackPayment ? { PaymentStatus: p.pay || '', PaymentNote: p.payNote || '' } : {},
+    BQ.fieldOk('Banquet_Parties', 'Badge') ? { Badge: p.badge || '' } : {});
   },
   awardFrom(it) {
     return {
@@ -114,6 +130,7 @@ BQ.map_ = {
    --------------------------------------------------------------------- */
 BQ.SPStore = {
   kind: 'sharepoint',
+  _have: {},
   _types: {},
 
   L(name) { return "/_api/web/lists/getbytitle('" + name + "')"; },
@@ -155,7 +172,7 @@ BQ.SPStore = {
     if (e.id) { await this.update('Banquet_Events', e.id, f); return e.id; }
     return this.create('Banquet_Events', f);
   },
-  async listParties(eventId) { return (await this.items('Banquet_Parties', 'EventId eq ' + Number(eventId))).map(BQ.map_.partyFrom); },
+  async listParties(eventId) { return (await this.items('Banquet_Parties', 'EventId eq ' + Number(eventId))).map(BQ.map_.partyFromFixed); },
   async saveParty(p) {
     const f = BQ.map_.partyTo(p);
     if (p.id) { await this.update('Banquet_Parties', p.id, f); return p.id; }
@@ -163,7 +180,7 @@ BQ.SPStore = {
   },
   deleteParty(id) { return this.remove('Banquet_Parties', id); },
   // fresh copy of one guest (used by check-in so two phones don't overwrite each other)
-  async getParty(id) { return BQ.map_.partyFrom(await BQ.sp.req(this.L('Banquet_Parties') + '/items(' + Number(id) + ')')); },
+  async getParty(id) { return BQ.map_.partyFromFixed(await BQ.sp.req(this.L('Banquet_Parties') + '/items(' + Number(id) + ')')); },
   async listAwards(eventId) { return (await this.items('Banquet_Awards', 'EventId eq ' + Number(eventId))).map(BQ.map_.awardFrom); },
   async saveAward(a) {
     const f = BQ.map_.awardTo(a);
@@ -193,9 +210,11 @@ BQ.SPStore = {
         const fields = await BQ.sp.getAll(this.L(list) + '/fields?$select=InternalName');
         row.exists = true;
         const have = new Set(fields.map(f => f.InternalName));
-        row.missing = BQ.schema[list].filter(([n]) => !have.has(n)).map(([n]) => n);
+        this._have[list] = have;
+        row.missing = BQ.schema[list].filter(f => f[2] !== 'opt' && !have.has(f[0])).map(f => f[0]);
+        row.optMissing = BQ.schema[list].filter(f => f[2] === 'opt' && !have.has(f[0])).map(f => f[0]);
       } catch (e) {
-        if (e.status === 404) { row.exists = false; row.missing = BQ.schema[list].map(([n]) => n); }
+        if (e.status === 404) { row.exists = false; row.missing = BQ.schema[list].filter(f => f[2] !== 'opt').map(f => f[0]); row.optMissing = BQ.schema[list].filter(f => f[2] === 'opt').map(f => f[0]); }
         else { row.error = e.message; }
       }
       out.push(row);
@@ -215,7 +234,7 @@ BQ.SPStore = {
           body: { __metadata: { type: 'SP.List' }, BaseTemplate: 100, Title: row.list, Description: 'Banquet Seating app data — do not rename' }
         });
       }
-      for (const name of row.missing) {
+      for (const name of row.missing.concat(row.optMissing || [])) {
         const type = BQ.schema[row.list].find(f => f[0] === name)[1];
         progress('Adding column ' + row.list + ' → ' + name + '…');
         await BQ.sp.req(this.L(row.list) + '/fields/createfieldasxml', {

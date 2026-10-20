@@ -71,7 +71,7 @@ BQ.plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 
 const SUFFIX = /^(jr\.?|sr\.?|ii|iii|iv|v|phd|md|esq\.?)$/i;
 BQ.splitName = function (raw) {
-  const s = String(raw || '').replace(/(^|\s)[\/\\|*.,-]+(?=\S)/g, '$1').replace(/\s+/g, ' ').trim();
+  const s = BQ.cleanPerson(raw).name.replace(/(^|\s)[\/\\|*.,-]+(?=\S)/g, '$1').replace(/\s+/g, ' ').trim();
   if (!s) return { first: '', last: '' };
   if (s.indexOf(',') > 0) {
     const [l, f] = s.split(',');
@@ -620,11 +620,20 @@ BQ.people = function () {
   });
   return out;
 };
-BQ.findPartyForName = function (name) {
-  const n = String(name || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  if (!n) return null;
-  const hit = BQ.people().find(x => x.name.toLowerCase().replace(/\s+/g, ' ').trim() === n);
-  return hit ? hit.party : null;
+// Find the guest record for a person's name (and badge, when known).
+// Returns null when there's no match OR when it's ambiguous (two different people with that name).
+BQ.findPartyForName = function (name, badge) {
+  const key = BQ.personKey(name);
+  if (!key) return null;
+  badge = String(badge || BQ.cleanPerson(name).badge || '').trim();
+  let hits = BQ.people().filter(x => BQ.personKey(x.name) === key);
+  if (badge) {
+    const exact = hits.filter(x => x.leader && x.party.badge === badge);
+    if (exact.length) return exact[0].party;
+    hits = hits.filter(x => !(x.leader && x.party.badge && x.party.badge !== badge));   // a different badge = a different person
+  }
+  const parties = Array.from(new Set(hits.map(x => x.party)));
+  return parties.length === 1 ? parties[0] : null;
 };
 
 /* Chair colors for one table: [{color, pid}] for each chair */
@@ -681,7 +690,8 @@ BQ.parseAwardName = function (raw) {
     else if (!rankTag && parts.length > 2 && BQ.RANK_TOKEN.test(last)) rankTag = parts.pop();
     else break;
   }
-  return { name: parts.join(' ').replace(/\s+/g, ' '), badge, rankTag };
+  const c = BQ.cleanPerson(parts.join(' '));   // also catches "CARLOS GOMEZ #12963" written with spaces
+  return { name: c.name, badge: badge || c.badge, rankTag };
 };
 
 /* ---------------------------------------------------------------------
@@ -705,4 +715,170 @@ BQ.parseTableList = function (txt) {
     else out.push(tok.replace(/^table/i, '').replace(/\*$/, ''));
   });
   return Array.from(new Set(out.filter(Boolean)));
+};
+
+/* ---------------------------------------------------------------------
+   Names & badges: "CARLOS GOMEZ #12963" → name "Carlos Gomez", badge "12963"
+   --------------------------------------------------------------------- */
+BQ.isAllCaps = s => /[A-Z]/.test(s) && s === s.toUpperCase() && s.replace(/[^A-Za-z]/g, '').length > 2;
+BQ.titleCaseName = function (s) {
+  return String(s || '').toLowerCase()
+    .replace(/(^|[\s\-'’(])([a-z])/g, (m, a, b) => a + b.toUpperCase())
+    .replace(/\bMc([a-z])/g, (m, a) => 'Mc' + a.toUpperCase())
+    .replace(/\b(Ii|Iii|Iv|Vi)\b/g, m => m.toUpperCase());
+};
+BQ.cleanPerson = function (raw, o) {
+  o = o || {};
+  let s = String(raw || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  let badge = '', m;
+  if ((m = s.match(/#\s*(\d{2,7})\b/))) badge = m[1];
+  else if ((m = s.match(/\(\s*(?:badge\s*)?#?\s*(\d{3,7})\s*\)/i))) badge = m[1];
+  else if ((m = s.match(/\bbadge\s*:?\s*(\d{3,7})\b/i))) badge = m[1];
+  else if ((m = s.match(/(?:^|[\s,\-–])(\d{3,7})\s*$/))) badge = m[1];
+  else if ((m = s.match(/^(\d{3,7})[\s,\-–]+(?=\D)/))) badge = m[1];
+  if (m) s = (s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length));
+  s = s.replace(/\s+/g, ' ').replace(/^[\s,\-–]+|[\s,\-–]+$/g, '').trim();
+  if (o.titleCase && BQ.isAllCaps(s)) s = BQ.titleCaseName(s);
+  return { name: s, badge };
+};
+BQ.RANK_WORDS = /^(asst\.?\s+chief|assistant\s+chief|deputy\s+chief|chief|major|maj\.|captain|capt\.|lieutenant|lt\.|sergeant|sgt\.|senior\s+corporal|sr\.?\s*corporal|sr\.?\s*cpl\.?|corporal|cpl\.|detective|det\.|police\s+officer|p\.\s?o\.|officer|ofc\.|mr\.|mrs\.|ms\.|dr\.)\s+(?=\S+\s+\S)/i;
+// Comparison key: ignores case, badge numbers, rank words and punctuation
+BQ.personKey = function (name) {
+  return BQ.cleanPerson(name).name.replace(BQ.RANK_WORDS, '').toLowerCase().replace(/[.,'’]/g, '').replace(/\s+/g, ' ').trim();
+};
+
+/* ---------------------------------------------------------------------
+   Possible duplicates: same name on more than one guest record
+   --------------------------------------------------------------------- */
+BQ.pairKey = (a, b) => [a, b].sort((x, y) => x - y).join('|');
+BQ.findDuplicates = function () {
+  const notDup = new Set(BQ.settings().notDup || []);
+  const groups = {};
+  BQ.state.parties.forEach(p => { const k = BQ.personKey(p.name); if (k) (groups[k] = groups[k] || []).push(p); });
+  const out = [];
+  Object.keys(groups).forEach(k => {
+    const ents = [];
+    groups[k].forEach(p => { if (!(p.group && ents.some(e => e.group === p.group))) ents.push(p); });   // split parts of one party aren't duplicates
+    if (ents.length < 2) return;
+    let open = false;
+    const differ = (x, y) => x.badge && y.badge && x.badge !== y.badge;   // different badge numbers = different people
+    for (let i = 0; i < ents.length; i++) for (let j = i + 1; j < ents.length; j++) if (!notDup.has(BQ.pairKey(ents[i].id, ents[j].id)) && !differ(ents[i], ents[j])) open = true;
+    if (!open) return;
+    const badges = new Set(ents.map(p => p.badge).filter(Boolean));
+    out.push({ key: k, parties: ents, differentBadges: badges.size > 1 });
+  });
+  return out;
+};
+BQ.awardLinksTo = pid => BQ.state.awards.filter(a => (a.recipients || []).some(r => r.pid === pid));
+
+/* Merge several guest records into one (awards and requests follow the kept record) */
+BQ.mergeParties = async function (keepId, dropIds, seats) {
+  const keep = BQ.partyById(keepId);
+  const drops = dropIds.map(BQ.partyById).filter(Boolean);
+  if (!keep || !drops.length) return false;
+  const after = BQ.clone(keep);
+  const lc = s => String(s || '').toLowerCase().trim();
+  drops.forEach(d => {
+    after.guests = (after.guests || []).concat((d.guests || []).filter(g => lc(g) !== lc(after.name) && !(after.guests || []).some(x => lc(x) === lc(g))));
+    (d.needs || []).forEach(n => { if (!after.needs.some(x => x.type === n.type && String(x.target || '') === String(n.target || '') && (x.text || '') === (n.text || ''))) after.needs.push(BQ.clone(n)); });
+    if (!after.badge && d.badge) after.badge = d.badge;
+    if (!after.aff && d.aff) after.aff = d.aff;
+    if (!after.table && d.table) after.table = d.table;
+    if (!after.phone && d.phone) after.phone = d.phone;
+    if (!after.email && d.email) after.email = d.email;
+    if (d.notes && after.notes.indexOf(d.notes) < 0) after.notes = [after.notes, d.notes].filter(Boolean).join(' | ');
+    if (d.vip) { after.vip = true; after.vipCount = Math.max(BQ.vipCount(after), BQ.vipCount(d)); }
+    after.checkedIn = Math.max(after.checkedIn || 0, d.checkedIn || 0);
+    after.vipIn = Math.max(after.vipIn || 0, d.vipIn || 0);
+    after.pinned = after.pinned || d.pinned;
+  });
+  after.seats = Math.max(1, Number(seats) || after.seats);
+  const dropSet = new Set(drops.map(d => d.id));
+  after.needs = (after.needs || []).filter(n => !(dropSet.has(Number(n.target)) || Number(n.target) === keep.id));
+  const changes = [{ kind: 'party', before: BQ.clone(keep), after }];
+  // awards: point every recipient at the kept record (and drop a duplicate line within the same award)
+  BQ.state.awards.forEach(a => {
+    if (!(a.recipients || []).some(r => dropSet.has(r.pid))) return;
+    const na = BQ.clone(a);
+    const seen = new Set();
+    na.recipients = na.recipients.map(r => dropSet.has(r.pid) ? Object.assign(r, { pid: keep.id, badge: r.badge || after.badge || '' }) : r)
+      .filter(r => { const k = r.pid ? 'p' + r.pid : 'n' + lc(r.name); if (r.pid === keep.id && seen.has(k)) return false; seen.add(k); return true; });
+    changes.push({ kind: 'award', before: BQ.clone(a), after: na });
+  });
+  // other guests' requests that pointed at a removed record
+  BQ.state.parties.forEach(p => {
+    if (p.id === keep.id || dropSet.has(p.id)) return;
+    if ((p.needs || []).some(n => dropSet.has(Number(n.target)))) changes.push(BQ.partyChange(p, x => x.needs.forEach(n => { if (dropSet.has(Number(n.target))) n.target = keep.id; })));
+  });
+  drops.forEach(d => changes.push({ kind: 'party', before: BQ.clone(d), after: null }));
+  return BQ.commit('Merged ' + drops.length + ' duplicate' + (drops.length > 1 ? 's' : '') + ' into ' + after.name, changes);
+};
+
+/* Award recipients that aren't linked (or point to a deleted guest) but match exactly one guest */
+BQ.relinkableRecipients = function () {
+  const out = [];
+  BQ.state.awards.forEach(a => (a.recipients || []).forEach((r, i) => {
+    if (!r.name || r.pid === -1 || (r.pid && BQ.partyById(r.pid))) return;   // -1 = unlinked on purpose
+    const p = BQ.findPartyForName(r.name, r.badge);
+    if (p) out.push({ a, i, r, p });
+  }));
+  return out;
+};
+BQ.relinkRecipients = function () {
+  const items = BQ.relinkableRecipients();
+  const byAward = new Map();
+  items.forEach(it => { const na = byAward.get(it.a.id) || BQ.clone(it.a); na.recipients[it.i].pid = it.p.id; byAward.set(it.a.id, na); });
+  const changes = Array.from(byAward.entries()).map(([id, after]) => ({ kind: 'award', before: BQ.clone(BQ.state.awards.find(x => x.id === id)), after }));
+  return changes.length ? BQ.commit('Linked ' + BQ.plural(items.length, 'award recipient') + ' to their guest records', changes) : Promise.resolve(true);
+};
+
+/* One-time clean-up: badges stuck in names (and optionally ALL-CAPS names) */
+BQ.scanNameFixes = function (titleCase) {
+  const fixes = [];
+  BQ.state.parties.forEach(p => {
+    if (BQ.isOrg(p)) return;
+    const c = BQ.cleanPerson(p.name, { titleCase });
+    const guests = (p.guests || []).map(g => BQ.cleanPerson(g, { titleCase }));
+    const gChanged = guests.some((g, i) => g.name !== p.guests[i]);
+    if (c.name !== p.name || (c.badge && !p.badge) || gChanged) {
+      fixes.push({ kind: 'party', label: p.name + (gChanged ? ' (+ guest names)' : ''), to: c.name + (c.badge || p.badge ? ' #' + (p.badge || c.badge) : ''),
+        change: BQ.partyChange(p, a => { a.name = c.name || a.name; if (c.badge && !a.badge) a.badge = c.badge; a.guests = guests.map(g => g.name); }) });
+    }
+  });
+  BQ.state.awards.forEach(a => {
+    const na = BQ.clone(a);
+    let changed = false;
+    (na.recipients || []).forEach(r => {
+      if (r.count > 1 && !r.badge && !/#\d/.test(r.name)) return;   // group lines like "Robbery Unit ×6"
+      const c = BQ.cleanPerson(r.name, { titleCase });
+      if (c.name !== r.name || (c.badge && !r.badge)) {
+        fixes.push({ kind: 'award', label: r.name + ' (award ' + BQ.awardTitle(a) + ')', to: c.name + (c.badge || r.badge ? ' #' + (r.badge || c.badge) : '') });
+        r.name = c.name || r.name; if (c.badge && !r.badge) r.badge = c.badge; changed = true;
+      }
+    });
+    if (changed) fixes.push({ kind: 'awardChange', change: { kind: 'award', before: BQ.clone(a), after: na } });
+  });
+  return fixes;
+};
+
+/* Other guest records with the same person's name (a different badge number means a different person) */
+BQ.sameNameParties = function (name, badge, excludeId) {
+  const key = BQ.personKey(name);
+  if (!key) return [];
+  badge = String(badge || BQ.cleanPerson(name).badge || '');
+  const notDup = new Set(BQ.settings().notDup || []);
+  return BQ.state.parties.filter(x => x.id !== excludeId && !BQ.isOrg(x) && BQ.personKey(x.name) === key &&
+    !(badge && x.badge && x.badge !== badge) && !(excludeId && notDup.has(BQ.pairKey(x.id, excludeId))));
+};
+/* Remember that these records are different people (stops the duplicate alert) */
+BQ.markNotDuplicates = function (ids, opts) {
+  ids = ids.filter(Boolean);
+  const pairs = [];
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) pairs.push(BQ.pairKey(ids[i], ids[j]));
+  const live = new Set(BQ.state.parties.map(p => p.id));
+  return BQ.commit((opts && opts.label) || 'Marked as different people', [BQ.eventChange(e => {
+    e.settings = e.settings || {};
+    const keep = (e.settings.notDup || []).filter(k => k.split('|').every(id => live.has(Number(id))));   // forget deleted records
+    e.settings.notDup = Array.from(new Set(keep.concat(pairs)));
+  })], { noUndo: !(opts && opts.undo) });
 };

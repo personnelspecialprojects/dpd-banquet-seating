@@ -102,10 +102,16 @@ BQ.screens.awards = {
     document.getElementById('awCount').textContent = BQ.plural(all.length, 'award') + ' · ' + BQ.plural(people, 'recipient');
     const missing = BQ.unlinkedRecipients();
     const alert = document.getElementById('awAlert');
-    alert.innerHTML = missing.length ? '<div class="card warnbox"><b>' + BQ.plural(missing.length, 'recipient') + ' not on the guest list.</b> They won’t have a table until they’re added or linked. ' +
-      '<button class="btn sm primary" id="awAddMissing">Add them to the waiting list…</button></div>' : '';
+    const relink = BQ.relinkableRecipients().length;
+    alert.innerHTML = (missing.length ? '<div class="card warnbox"><b>' + BQ.plural(missing.length, 'recipient') + ' not linked to the guest list.</b> They won’t have a table until they’re linked or added. ' +
+      (relink ? '<button class="btn sm primary" id="awRelink">🔗 Link ' + relink + ' to matching guests</button> ' : '') +
+      (missing.length > relink ? '<button class="btn sm' + (relink ? '' : ' primary') + '" id="awAddMissing">Add ' + (relink ? 'the rest' : 'them') + ' to the waiting list…</button>' : '') + '</div>' : '') +
+      BQ.cleanupBannerHtml();
+    BQ.wireCleanupBanner(alert);
     const am = document.getElementById('awAddMissing');
     if (am) am.onclick = () => BQ.addRecipientsDialog(missing);
+    const rl = document.getElementById('awRelink');
+    if (rl) rl.onclick = async () => { if (await BQ.relinkRecipients()) BQ.ui.toast('Linked ' + BQ.plural(relink, 'award recipient') + ' to the guest list', 'ok'); };
     if (!all.length) {
       box.innerHTML = '<div class="card"><p>No awards yet.</p><p class="muted">Click <b>📥 Import award file</b> to bring in the awards spreadsheet (category rows, then Rank / Name / Memo / Log Number), or <b>＋ Add award</b> to type one in.</p></div>';
       document.getElementById('awRoute').innerHTML = '';
@@ -214,16 +220,26 @@ BQ.screens.awards = {
    Add unlinked recipients to the guest list (waiting for a table)
    items: [{a: award, r: recipient}]
    --------------------------------------------------------------------- */
+BQ.recipKey = r => BQ.personKey(r.name) + '|' + (r.badge || BQ.cleanPerson(r.name).badge || '');
 BQ.addRecipientsDialog = function (items) {
+  // anyone who already matches exactly one guest gets linked, not added twice
+  const linkable = items.filter(it => BQ.findPartyForName(it.r.name, it.r.badge));
+  items = items.filter(it => linkable.indexOf(it) < 0);
+  if (!items.length && linkable.length) {
+    const n = BQ.relinkableRecipients().length;
+    BQ.relinkRecipients().then(ok => ok && BQ.ui.toast('Linked ' + BQ.plural(n, 'award recipient') + ' to people already on the guest list', 'ok'));
+    return;
+  }
   // one guest per person even if they receive several awards
   const people = [];
   items.forEach(it => {
-    const key = (it.r.name + '|' + (it.r.badge || '')).toLowerCase();
+    const key = BQ.recipKey(it.r);
     let p = people.find(x => x.key === key);
     if (!p) { p = { key, r: it.r, awards: [] }; people.push(p); }
     p.awards.push(it.a);
   });
   const body = '<p><b>' + people.length + '</b> recipient' + (people.length === 1 ? '' : 's') + ' will be added to the waiting list so you can seat them.</p>' +
+    (linkable.length ? '<p class="small ok">✓ ' + BQ.plural(linkable.length, 'other recipient') + ' already on the guest list will just be linked, not added again.</p>' : '') +
     '<div class="field"><label>Seats for each recipient</label><div class="seg" id="arSeats">' + [1, 2, 3, 4].map(n => '<button data-v="' + n + '" class="' + (n === 2 ? 'on' : '') + '">' + (n === 1 ? 'Just them' : n === 2 ? 'Them + 1 guest' : 'Them + ' + (n - 1) + ' guests') + '</button>').join('') + '</div>' +
     '<div class="muted small">You can change any one later in their details.</div></div>' +
     BQ.imports.vipFieldHtml('arVip') +
@@ -238,7 +254,10 @@ BQ.addRecipientsDialog = function (items) {
         const seats = Number(m.el.querySelector('#arSeats .on').dataset.v);
         const together = m.el.querySelector('#arTogether').checked;
         const front = m.el.querySelector('#arFront').checked;
+        const since = BQ.history.length;
+        if (linkable.length) await BQ.relinkRecipients();
         await BQ.addRecipientsAsGuests(people, { seats, together, front, vip: BQ.imports.readVip(m.el, 'arVip') });
+        BQ.mergeHistory(since, 'Added ' + people.length + ' award recipients to the guest list');
       }
     }]
   });
@@ -251,10 +270,11 @@ BQ.addRecipientsAsGuests = async function (people, o) {
     if (o.front) needs.push({ type: 'front', target: '' });
     if (o.together) p.awards.filter(a => (a.recipients || []).length > 1).slice(0, 1).forEach(a => needs.push({ type: 'near', target: 'award:' + a.id }));
     if (o.nearUnit && p.r.unit) needs.push({ type: 'near', target: 'aff:' + p.r.unit });
+    const c = BQ.cleanPerson(p.r.name);
     return {
       kind: 'party', before: null, after: {
-        name: p.r.name, type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
-        notes: 'Award recipient: ' + p.awards.map(BQ.awardTitle).join(', ') + (p.r.badge ? ' · Badge ' + p.r.badge : '') + (p.r.rank ? ' · ' + p.r.rank : ''),
+        name: c.name || p.r.name, badge: p.r.badge || c.badge || '', type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
+        notes: 'Award recipient: ' + p.awards.map(BQ.awardTitle).join(', ') + (p.r.rank ? ' · ' + p.r.rank : ''),
         checkedIn: 0, pinned: false, group: '', vip: false, vipCount: 0, vipIn: 0
       }, _p: p
     };
@@ -269,7 +289,7 @@ BQ.addRecipientsAsGuests = async function (people, o) {
   creates.forEach(c => {
     c._p.awards.forEach(a => {
       const cur = touched.get(a.id) || BQ.clone(BQ.state.awards.find(x => x.id === a.id));
-      cur.recipients.forEach(r => { if ((r.name + '|' + (r.badge || '')).toLowerCase() === c._p.key && !(r.pid && BQ.partyById(r.pid))) r.pid = c.after.id; });
+      cur.recipients.forEach(r => { if (BQ.recipKey(r) === c._p.key && !(r.pid && BQ.partyById(r.pid))) r.pid = c.after.id; });
       touched.set(a.id, cur);
     });
   });
@@ -288,7 +308,7 @@ BQ.awardDialog = function (a) {
   const cats = Array.from(new Set(BQ.state.awards.map(x => x.cat).filter(Boolean)));
   const segs = Array.from(new Set(BQ.segmentOrder().concat(BQ.state.awards.map(x => x.segment)).filter(Boolean)));
   const names = BQ.people();
-  const partyOpts = '<option value="">— seated with… —</option>' + BQ.state.parties.slice().sort((x, y) => x.name.localeCompare(y.name)).map(p => '<option value="' + p.id + '">' + BQ.esc(p.name) + (p.table ? ' (T' + BQ.esc(p.table) + ')' : '') + '</option>').join('');
+  const partyOpts = '<option value="">— link to a guest… —</option>' + BQ.state.parties.slice().sort((x, y) => x.name.localeCompare(y.name)).map(p => '<option value="' + p.id + '">' + BQ.esc(p.name) + (p.badge ? ' #' + BQ.esc(p.badge) : '') + (p.table ? ' (T' + BQ.esc(p.table) + ')' : '') + '</option>').join('');
   const body =
     '<div class="field two"><div><label>Award name</label><input id="adName" class="big" value="' + BQ.esc(d.name) + '" placeholder="e.g. Life Saving Award"/></div>' +
     '<div><label>Log Number <span class="muted">(optional)</span></label><input id="adLog" value="' + BQ.esc(d.logNo || '') + '" placeholder="e.g. LS-19"/></div></div>' +
@@ -310,7 +330,7 @@ BQ.awardDialog = function (a) {
   const $ = s => m.el.querySelector(s);
   const draw = () => {
     $('#adRecs').innerHTML = d.recipients.map((r, i) => {
-      if (!r.pid && r.name) { const p = BQ.findPartyForName(r.name); if (p) r.pid = p.id; }
+      if (r.pid !== -1 && !(r.pid && BQ.partyById(r.pid)) && r.name) { const p = BQ.findPartyForName(r.name, r.badge); r.pid = p ? p.id : null; }
       const s = BQ.recipientSeat(r);
       return '<div class="recrow"><input class="rank" data-rk="' + i + '" value="' + BQ.esc(r.rank || '') + '" placeholder="Rank"/>' +
         '<input list="adPeople" data-i="' + i + '" value="' + BQ.esc(r.name) + '" placeholder="Name"/>' +
@@ -322,9 +342,13 @@ BQ.awardDialog = function (a) {
         '<button class="x" data-rm="' + i + '">✕</button></div>';
     }).join('') || '<div class="muted small">No recipients yet.</div>';
     const R = $('#adRecs');
-    R.querySelectorAll('[data-i]').forEach(inp => inp.onchange = () => { const r = d.recipients[Number(inp.dataset.i)]; r.name = inp.value.trim(); r.pid = null; draw(); });
+    R.querySelectorAll('[data-i]').forEach(inp => inp.onchange = () => {
+      const r = d.recipients[Number(inp.dataset.i)];
+      const c = BQ.cleanPerson(inp.value);
+      r.name = c.name; if (c.badge && !r.badge) r.badge = c.badge; r.pid = null; draw();
+    });
     R.querySelectorAll('[data-rk]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.rk)].rank = inp.value.trim(); });
-    R.querySelectorAll('[data-bd]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.bd)].badge = inp.value.trim(); });
+    R.querySelectorAll('[data-bd]').forEach(inp => inp.onchange = () => { const r = d.recipients[Number(inp.dataset.bd)]; r.badge = inp.value.replace(/[^0-9A-Za-z]/g, ''); if (r.pid !== -1 && !BQ.partyById(r.pid)) { r.pid = null; draw(); } });
     R.querySelectorAll('[data-un]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.un)].unit = inp.value.trim(); });
     R.querySelectorAll('[data-c]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.c)].count = Math.max(1, parseInt(inp.value, 10) || 1); });
     R.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { d.recipients.splice(Number(b.dataset.rm), 1); draw(); });

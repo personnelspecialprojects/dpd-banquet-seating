@@ -604,7 +604,7 @@ BQ.screens.seat = {
     const list = document.getElementById('wlList');
     if (!list) return;
     const q = V.filter.toLowerCase();
-    const w = BQ.unseated().filter(p => !q || (p.name + ' ' + p.aff + ' ' + (p.guests || []).join(' ')).toLowerCase().indexOf(q) >= 0)
+    const w = BQ.unseated().filter(p => !q || (p.name + ' ' + (p.badge || '') + ' ' + p.aff + ' ' + (p.guests || []).join(' ')).toLowerCase().indexOf(q) >= 0)
       .sort((a, b) => BQ.sortKey(a.name, BQ.isOrg(a)).localeCompare(BQ.sortKey(b.name, BQ.isOrg(b))));
     const all = BQ.unseated();
     document.getElementById('wlSum').textContent = all.length ? BQ.plural(all.length, 'party') .replace('partys', 'parties') + ' · ' + BQ.plural(all.reduce((s, p) => s + p.seats, 0), 'seat') : 'Everyone has a seat 🎉';
@@ -668,7 +668,7 @@ BQ.partyCardHtml = function (p, o) {
   const group = (p.group ? '<span class="muted small" title="Part of a split party">⛓</span>' : '') + (p.vip ? ' <span class="vipchip" title="VIP reception">⭐</span>' : '');
   return '<div class="pcard' + (o.selected ? ' selected' : '') + (BQ.isOrg(p) ? ' org' : '') + '" data-pid="' + p.id + '"' + (o.color ? ' style="--pc:' + o.color + '"' : '') + '>' +
     '<div class="pc-main"><span class="pc-icon" title="' + BQ.esc(ti.label) + '">' + ti.icon + '</span>' +
-    '<span class="pc-name">' + BQ.esc(p.name) + group + (p.pinned ? ' 📌' : '') + '</span>' +
+    '<span class="pc-name">' + BQ.esc(p.name) + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + group + (p.pinned ? ' 📌' : '') + '</span>' +
     '<span class="pc-seats" title="Seats">' + p.seats + '</span></div>' +
     '<div class="pc-sub">' + (p.aff ? '<span class="muted">' + BQ.esc(p.aff) + '</span>' : '') + needs + pay +
     (o.actions ? o.actions : '<button class="edit linkbtn" title="Edit details">Edit</button>') + '</div></div>';
