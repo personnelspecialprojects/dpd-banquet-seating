@@ -458,6 +458,66 @@ X.printVip = function () {
 };
 
 /* ---------------------------------------------------------------------
+   TICKET PICK-UP SIGN-OUT SHEET
+   Name + badge come from the app; Date, picked up by, and signature are left blank to fill in by hand.
+   --------------------------------------------------------------------- */
+X.TICKET_WHO = [['all', 'Everyone on the guest list'], ['people', 'People only (leave out units & organizations)'], ['awards', 'Award recipients only'], ['vip', 'VIP reception guests only']];
+X.ticketRows = function (who) {
+  const recips = BQ.recipientPartyIds();
+  return BQ.state.parties.filter(p => p.type !== 'Hold' && (
+    who === 'people' ? !BQ.isOrg(p) : who === 'awards' ? recips.has(p.id) : who === 'vip' ? !!p.vip : true))
+    .map(p => {
+      const org = BQ.isOrg(p);
+      const n = org ? null : BQ.splitName(p.name);
+      return { key: BQ.sortKey(p.name, org), name: org ? p.name : n.last + (n.first ? ', ' + n.first : ''), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || '') };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+};
+X.ticketDialog = function (format) {
+  const m = BQ.ui.modal({
+    title: 'Ticket pick-up sheet', wide: false,
+    body: '<p class="muted small">One line per guest record, A–Z. <b>Name</b> and <b>Badge / Emp #</b> are filled in from the app. <b>Date</b>, <b>Picked up by</b> and <b>Signature</b> are left blank to fill in by hand.</p>' +
+      '<div class="field"><label>Who should be on the sheet?</label>' + X.TICKET_WHO.map((w, i) => '<label class="tkopt"><input type="radio" name="tkWho" value="' + w[0] + '"' + (i === 0 ? ' checked' : '') + '/> ' + w[1] + ' <span class="muted small">(' + X.ticketRows(w[0]).length + ')</span></label>').join('') + '</div>',
+    buttons: [{ label: 'Cancel' }, {
+      label: format === 'xlsx' ? 'Download Excel' : 'Print', cls: 'primary', onClick: async mm => {
+        const who = mm.el.querySelector('[name=tkWho]:checked').value;
+        const rows = X.ticketRows(who);
+        if (!rows.length) { BQ.ui.toast('Nobody matches that choice.'); return false; }
+        const label = (X.TICKET_WHO.find(w => w[0] === who) || [])[1];
+        if (format === 'xlsx') await X.ticketXlsx(rows, who === 'all' ? '' : label); else X.printTickets(rows, who === 'all' ? '' : label);
+      }
+    }]
+  });
+  return m;
+};
+X.TICKET_COLS = ['Date', 'Name', 'Badge / Emp #', 'Picked up by (name & badge / emp #)', 'Signature'];
+X.ticketXlsx = async function (rows, sub) {
+  if (!X.needExcel()) return;
+  const wb = X.newBook();
+  const ws = wb.addWorksheet('Ticket Pick-Up', { views: [{ state: 'frozen', ySplit: 3 }] });
+  ws.columns = [{ width: 12 }, { width: 30 }, { width: 15 }, { width: 40 }, { width: 34 }];
+  X.title(ws, BQ.state.event.title + ' — Ticket Pick-Up', (sub ? sub + ' · ' : '') + rows.length + ' names · sign when tickets are picked up', 5);
+  X.header(ws, 3, X.TICKET_COLS);
+  const line = { style: 'thin', color: { argb: 'FF999999' } };
+  rows.forEach((x, i) => {
+    const row = ws.getRow(i + 4);
+    row.values = ['', x.name, x.badge, '', ''];
+    row.height = 30;
+    row.font = { size: 12 };
+    for (let c = 1; c <= 5; c++) { const cell = row.getCell(c); cell.border = { top: line, bottom: line, left: line, right: line }; cell.alignment = { vertical: 'middle', horizontal: c === 3 ? 'center' : 'left' }; }
+    row.getCell(3).numFmt = '@';
+  });
+  X.printSetup(ws, 'landscape', '3:3');
+  await X.save(wb, 'Ticket pick-up sheet');
+};
+X.printTickets = function (rows, sub) {
+  X.print('<div class="ptix">' + X.printHead('Ticket Pick-Up', (sub ? sub + ' · ' : '') + rows.length + ' names') +
+    '<table><thead><tr>' + X.TICKET_COLS.map((c, i) => '<th class="c' + i + '">' + BQ.esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
+    rows.map(x => '<tr><td></td><td>' + BQ.esc(x.name) + '</td><td class="c">' + BQ.esc(x.badge) + '</td><td></td><td></td></tr>').join('') +
+    '</tbody></table></div>', 'landscape', 'ticket pick-up sheet');
+};
+
+/* ---------------------------------------------------------------------
    7. FULL BACKUP (everything; can be restored with Import → Restore)
    --------------------------------------------------------------------- */
 X.backupXlsx = async function () {
@@ -640,6 +700,7 @@ BQ.screens.exports = {
       tile('lineup', '🏆', 'Awards lineup', 'Program order with recipient tables and the escort pickup route.') +
       tile('awardfile', '🎖️', 'Award file + tables', 'The awards spreadsheet in its usual layout (Rank, Name, Memo, Log Number), with each person’s table added.') +
       tile('vip', '⭐', 'VIP reception list', 'Everyone invited to the VIP reception, A–Z, with VIP tickets and seats.') +
+      tile('tickets', '🎟️', 'Ticket pick-up sheet', 'A–Z sign-out sheet: Date, Name, Badge / Emp #, Picked up by, Signature.') +
       tile('backup', '💾', 'Full backup', 'Everything in one file. Can be restored later.') +
       '</div>' +
       '<h2 class="sec">Print or save as PDF</h2><div class="tiles">' +
@@ -650,6 +711,7 @@ BQ.screens.exports = {
       tile('pcheck', '🚪', 'Check-in list', 'Printed A–Z list with check boxes.') +
       tile('pline', '🏆', 'Awards lineup', 'Program with tables, plus escort pickup route per segment.') +
       tile('pvip', '⭐', 'VIP reception list', 'Printed list with check boxes for the reception door.') +
+      tile('ptickets', '🎟️', 'Ticket pick-up sheet', 'Sign-out sheet with lines to write the date, who picked up, and a signature.') +
       tile('tents', '🪧', 'Table number tents', 'One per page. Fold in half.') +
       tile('escort', '🎫', 'Escort cards', 'Name + table cards, 10 per page, A–Z.') +
       tile('qrsign', '📱', 'Phone check-in QR sign', 'A page with the QR code staff scan to check people in from their phones.') +
@@ -664,7 +726,7 @@ BQ.screens.exports = {
       '<p class="muted small">Tip: in the print window, choose your printer or <b>Save as PDF</b>.</p></div>';
     const go = {
       classic: X.classicXlsx, alpha: X.alphaXlsx, rosters: X.rostersXlsx, checkin: X.checkinXlsx, payment: X.paymentXlsx, lineup: X.lineupXlsx, backup: X.backupXlsx,
-      awardfile: X.awardFileXlsx, qrsign: X.printQrSign, vip: X.vipXlsx, pvip: X.printVip, impAwards: () => BQ.imports.awardsDialog(), impHonors: () => BQ.imports.honorsDialog(),
+      tickets: () => X.ticketDialog('xlsx'), ptickets: () => X.ticketDialog('print'), awardfile: X.awardFileXlsx, qrsign: X.printQrSign, vip: X.vipXlsx, pvip: X.printVip, impAwards: () => BQ.imports.awardsDialog(), impHonors: () => BQ.imports.honorsDialog(),
       pmap: X.printMap, png: X.mapPng, palpha: X.printAlpha, prost: X.printRosters, pcheck: X.printCheckin, pline: X.printLineup, tents: X.printTents, escort: X.printEscort,
       impClassic: () => BQ.imports.classicDialog(), impPaste: () => BQ.imports.pasteDialog(), impBackup: () => BQ.imports.restoreDialog()
     };
