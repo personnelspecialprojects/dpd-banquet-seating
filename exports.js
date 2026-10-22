@@ -201,7 +201,7 @@ X.classicXlsx = async function () {
    2. ALPHABETICAL
    --------------------------------------------------------------------- */
 X.alphaRows = function () {
-  const rows = BQ.people().map(x => {
+  const rows = BQ.people().filter(x => !x.party.notAttending).map(x => {
     const p = x.party;
     const n = x.org ? { first: '', last: x.name } : BQ.splitName(x.name);
     let party = '';
@@ -416,7 +416,7 @@ X.awardFileXlsx = async function () {
       const s = BQ.recipientSeat(rec);
       const nm = String(rec.name || '').trim().replace(/\s+/g, '_') + (rec.badge ? '_' + rec.badge : '');
       const row = ws.getRow(r);
-      row.values = [rec.rank || '', nm, rec.memo || '', a.logNo || '', rec.note || '', s.table || (s.state === 'wait' ? 'No table' : 'Not on list'), s.party ? s.party.name : '', a.status || ''];
+      row.values = [rec.rank || '', nm, rec.memo || '', a.logNo || '', rec.note || '', s.table || (s.state === 'na' ? 'Not attending' : s.state === 'wait' ? 'No table' : 'Not on list'), s.party ? s.party.name : '', a.status || ''];
       row.getCell(6).font = { bold: true, color: { argb: s.table ? 'FF000000' : 'FFC00000' } };
       row.getCell(6).alignment = { horizontal: 'center' };
       r++;
@@ -427,7 +427,7 @@ X.awardFileXlsx = async function () {
 };
 
 /* VIP reception list */
-X.vipRows = () => BQ.state.parties.filter(p => p.vip).map(p => ({ p, key: BQ.sortKey(p.name, BQ.isOrg(p)), n: BQ.vipCount(p) })).sort((a, b) => a.key.localeCompare(b.key));
+X.vipRows = () => BQ.state.parties.filter(p => p.vip && !p.notAttending).map(p => ({ p, key: BQ.sortKey(p.name, BQ.isOrg(p)), n: BQ.vipCount(p) })).sort((a, b) => a.key.localeCompare(b.key));
 X.vipXlsx = async function () {
   if (!X.needExcel()) return;
   const rows = X.vipRows();
@@ -469,29 +469,34 @@ X.ticketRows = function (who) {
     .map(p => {
       const org = BQ.isOrg(p);
       const n = org ? null : BQ.splitName(p.name);
-      return { key: BQ.sortKey(p.name, org), name: org ? p.name : n.last + (n.first ? ', ' + n.first : ''), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || '') };
+      return { key: BQ.sortKey(p.name, org), name: org ? p.name : n.last + (n.first ? ', ' + n.first : ''), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || ''), na: !!p.notAttending };
     })
     .sort((a, b) => a.key.localeCompare(b.key));
 };
+// optional: everyone marked "Not attending" goes to the bottom under its own heading
+X.ticketGroups = (rows, naLast) => naLast ? [{ rows: rows.filter(x => !x.na) }, { label: 'NOT ATTENDING', rows: rows.filter(x => x.na) }].filter(g => g.rows.length) : [{ rows }];
 X.ticketDialog = function (format) {
   const m = BQ.ui.modal({
     title: 'Ticket pick-up sheet', wide: false,
     body: '<p class="muted small">One line per guest record, A–Z. <b>Name</b> and <b>Badge / Emp #</b> are filled in from the app. <b>Date</b>, <b>Picked up by</b> and <b>Signature</b> are left blank to fill in by hand.</p>' +
-      '<div class="field"><label>Who should be on the sheet?</label>' + X.TICKET_WHO.map((w, i) => '<label class="tkopt"><input type="radio" name="tkWho" value="' + w[0] + '"' + (i === 0 ? ' checked' : '') + '/> ' + w[1] + ' <span class="muted small">(' + X.ticketRows(w[0]).length + ')</span></label>').join('') + '</div>',
+      '<div class="field"><label>Who should be on the sheet?</label>' + X.TICKET_WHO.map((w, i) => '<label class="tkopt"><input type="radio" name="tkWho" value="' + w[0] + '"' + (i === 0 ? ' checked' : '') + '/> ' + w[1] + ' <span class="muted small">(' + X.ticketRows(w[0]).length + ')</span></label>').join('') + '</div>' +
+      '<div class="field"><label class="tkopt"><input type="checkbox" id="tkNA" checked/> Put people who are <b>not attending</b> at the bottom, under a “Not attending” heading <span class="muted small">(' + X.ticketRows('all').filter(x => x.na).length + ' now)</span></label></div>',
     buttons: [{ label: 'Cancel' }, {
       label: format === 'xlsx' ? 'Download Excel' : 'Print', cls: 'primary', onClick: async mm => {
         const who = mm.el.querySelector('[name=tkWho]:checked').value;
         const rows = X.ticketRows(who);
         if (!rows.length) { BQ.ui.toast('Nobody matches that choice.'); return false; }
         const label = (X.TICKET_WHO.find(w => w[0] === who) || [])[1];
-        if (format === 'xlsx') await X.ticketXlsx(rows, who === 'all' ? '' : label); else X.printTickets(rows, who === 'all' ? '' : label);
+        const groups = X.ticketGroups(rows, mm.el.querySelector('#tkNA').checked);
+        if (format === 'xlsx') await X.ticketXlsx(groups, who === 'all' ? '' : label); else X.printTickets(groups, who === 'all' ? '' : label);
       }
     }]
   });
   return m;
 };
 X.TICKET_COLS = ['Date', 'Name', 'Badge / Emp #', 'Picked up by (name & badge / emp #)', 'Signature'];
-X.ticketXlsx = async function (rows, sub) {
+X.ticketXlsx = async function (groups, sub) {
+  const rows = [].concat.apply([], groups.map(g => g.rows));
   if (!X.needExcel()) return;
   const wb = X.newBook();
   const ws = wb.addWorksheet('Ticket Pick-Up', { views: [{ state: 'frozen', ySplit: 3 }] });
@@ -499,21 +504,35 @@ X.ticketXlsx = async function (rows, sub) {
   X.title(ws, BQ.state.event.title + ' — Ticket Pick-Up', (sub ? sub + ' · ' : '') + rows.length + ' names · sign when tickets are picked up', 5);
   X.header(ws, 3, X.TICKET_COLS);
   const line = { style: 'thin', color: { argb: 'FF999999' } };
-  rows.forEach((x, i) => {
-    const row = ws.getRow(i + 4);
+  let r = 4;
+  groups.forEach(g => {
+    if (g.label) {
+      r++;   // a blank line, then the heading
+      ws.mergeCells(r, 1, r, 5);
+      const h = ws.getCell(r, 1);
+      h.value = g.label + ' (' + g.rows.length + ')';
+      h.font = { bold: true, size: 13, color: { argb: 'FF8B1A1A' } }; h.fill = X.fill('FFF6E3E3');
+      ws.getRow(r).height = 22;
+      r++;
+    }
+    g.rows.forEach(x => { fill(ws.getRow(r), x); r++; });
+  });
+  function fill(row, x) {
     row.values = ['', x.name, x.badge, '', ''];
     row.height = 30;
     row.font = { size: 12 };
     for (let c = 1; c <= 5; c++) { const cell = row.getCell(c); cell.border = { top: line, bottom: line, left: line, right: line }; cell.alignment = { vertical: 'middle', horizontal: c === 3 ? 'center' : 'left' }; }
     row.getCell(3).numFmt = '@';
-  });
+  }
   X.printSetup(ws, 'landscape', '3:3');
   await X.save(wb, 'Ticket pick-up sheet');
 };
-X.printTickets = function (rows, sub) {
-  X.print('<div class="ptix">' + X.printHead('Ticket Pick-Up', (sub ? sub + ' · ' : '') + rows.length + ' names') +
+X.printTickets = function (groups, sub) {
+  const n = groups.reduce((s, g) => s + g.rows.length, 0);
+  X.print('<div class="ptix">' + X.printHead('Ticket Pick-Up', (sub ? sub + ' · ' : '') + n + ' names') +
     '<table><thead><tr>' + X.TICKET_COLS.map((c, i) => '<th class="c' + i + '">' + BQ.esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
-    rows.map(x => '<tr><td></td><td>' + BQ.esc(x.name) + '</td><td class="c">' + BQ.esc(x.badge) + '</td><td></td><td></td></tr>').join('') +
+    groups.map(g => (g.label ? '<tr class="grp"><td colspan="5">' + BQ.esc(g.label) + ' (' + g.rows.length + ')</td></tr>' : '') +
+      g.rows.map(x => '<tr><td></td><td>' + BQ.esc(x.name) + '</td><td class="c">' + BQ.esc(x.badge) + '</td><td></td><td></td></tr>').join('')).join('') +
     '</tbody></table></div>', 'landscape', 'ticket pick-up sheet');
 };
 
@@ -525,11 +544,11 @@ X.backupXlsx = async function () {
   const wb = X.newBook();
   const g = wb.addWorksheet('Guests', { views: [{ state: 'frozen', ySplit: 1 }] });
   const PAY = BQ.config.trackPayment;
-  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception']);
+  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception', 'Badge', 'Not Attending']);
   g.columns = cols.map(c => ({ width: { Name: 28, 'Guest Names': 40, Requests: 40, Notes: 30, Email: 26, 'Payment Note': 22, 'Unit / Org': 22 }[c] || 12 }));
   X.header(g, 1, cols, { size: 11 });
   BQ.state.parties.slice().sort((a, b) => BQ.numSort(a.table || 'zz', b.table || 'zz') || a.name.localeCompare(b.name)).forEach((p, i) => {
-    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '']);
+    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '', p.badge || '', p.notAttending ? 'Yes' : '']);
   });
   g.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   const t = wb.addWorksheet('Tables');
@@ -648,7 +667,7 @@ X.printLineup = function () {
     sg.awards.forEach(a => {
       const recs = a.recipients || [];
       html += '<tr><td class="n">' + (all.indexOf(a) + 1) + '</td><td><b>' + BQ.esc(a.logNo ? a.logNo : '') + '</b> ' + BQ.esc(a.name) + (a.presenter ? '<br><small>Presenter: ' + BQ.esc(a.presenter) + '</small>' : '') + '</td><td>' +
-        recs.map(r => BQ.esc(BQ.recipLabel(r)) + (r.count > 1 ? ' ×' + r.count : '')).join('<br>') + '</td><td class="t">' + recs.map(r => BQ.esc(BQ.recipientSeat(r).table || '—')).join('<br>') + '</td><td class="box">☐</td></tr>';
+        recs.map(r => BQ.esc(BQ.recipLabel(r)) + (r.count > 1 ? ' ×' + r.count : '')).join('<br>') + '</td><td class="t">' + recs.map(r => { const x = BQ.recipientSeat(r); return BQ.esc(x.table || (x.state === 'na' ? 'Not attending' : '—')); }).join('<br>') + '</td><td class="box">☐</td></tr>';
     });
     html += '</tbody></table><h3>Escort pickup route — ' + BQ.esc(sg.name || 'Program') + '</h3><ol class="proute">' +
       BQ.pickupRoute(sg.awards).map(s => '<li><b>' + BQ.esc(s.seat.table ? 'Table ' + s.seat.table : s.seat.text) + '</b> — ' + BQ.esc(BQ.recipLabel(s.r)) + (s.r.count > 1 ? ' ×' + s.r.count : '') + ' <small>(#' + s.num + (s.award.logNo ? ' ' + BQ.esc(s.award.logNo) : '') + ')</small></li>').join('') + '</ol>';

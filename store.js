@@ -22,7 +22,8 @@ BQ.schema = {
     ['PaymentStatus', 'Text', 'pay'], ['PaymentNote', 'Text', 'pay'], ['NeedsJson', 'Note'], ['PartyNotes', 'Note'],
     ['GuestNames', 'Note'], ['CheckedIn', 'Number'], ['CheckInTime', 'DateTime'], ['Pinned', 'Boolean'],
     ['VipReception', 'Boolean'], ['VipCount', 'Number'], ['VipCheckedIn', 'Number'],
-    ['Badge', 'Text', 'opt']   // optional: the app works without it, but badge numbers aren't saved
+    ['Badge', 'Text', 'opt'],        // optional: without it the badge rides at the end of the name ("… #12963")
+    ['NotAttending', 'Boolean', 'opt'] // optional: without it the name carries " - NOT ATTENDING"
   ],
   Banquet_Awards: [
     ['EventId', 'Number'], ['AwardCategory', 'Text'], ['AwardKind', 'Text'], ['ProgramOrder', 'Number'],
@@ -87,25 +88,27 @@ BQ.map_ = {
       notes: it.PartyNotes || '', guests: lines(it.GuestNames), checkedIn: Number(it.CheckedIn) || 0,
       checkInTime: it.CheckInTime || '', pinned: !!it.Pinned,
       vip: !!it.VipReception, vipCount: Number(it.VipCount) || 0, vipIn: Number(it.VipCheckedIn) || 0,
-      badge: it.Badge || ''
+      badge: it.Badge || '', notAttending: !!it.NotAttending
     };
   },
   // Without a Badge column the badge rides along at the end of the name ("Carlos Gomez #12963")
   partyFromFixed(it) {
     const p = BQ.map_.partyFrom(it);
+    if (!BQ.fieldOk('Banquet_Parties', 'NotAttending')) { const n = BQ.stripNA(p.name); if (n.na && n.name) { p.name = n.name; p.notAttending = true; } }
     if (!BQ.fieldOk('Banquet_Parties', 'Badge')) { const m = p.name.match(/^(.*\S)\s+#([0-9A-Za-z]{1,10})$/); if (m) { p.name = m[1]; p.badge = p.badge || m[2]; } }
     return p;
   },
   partyTo(p) {
     return Object.assign({
-      Title: (p.name || '(no name)') + (p.badge && !BQ.fieldOk('Banquet_Parties', 'Badge') ? ' #' + p.badge : ''), EventId: p.eventId, PartyType: p.type || 'Guest', Affiliation: p.aff || '',
+      Title: (p.name || '(no name)') + (p.badge && !BQ.fieldOk('Banquet_Parties', 'Badge') ? ' #' + p.badge : '') + (p.notAttending && !BQ.fieldOk('Banquet_Parties', 'NotAttending') ? ' - NOT ATTENDING' : ''), EventId: p.eventId, PartyType: p.type || 'Guest', Affiliation: p.aff || '',
       Seats: Number(p.seats) || 0, TableNo: p.table ? String(p.table) : '', GroupKey: p.group || '',
       ContactPhone: p.phone || '', ContactEmail: p.email || '', NeedsJson: JSON.stringify(p.needs || []), PartyNotes: p.notes || '',
       GuestNames: (p.guests || []).join('\n'), CheckedIn: Number(p.checkedIn) || 0,
       CheckInTime: p.checkInTime || null, Pinned: !!p.pinned,
       VipReception: !!p.vip, VipCount: Number(p.vipCount) || 0, VipCheckedIn: Number(p.vipIn) || 0
     }, BQ.config.trackPayment ? { PaymentStatus: p.pay || '', PaymentNote: p.payNote || '' } : {},
-    BQ.fieldOk('Banquet_Parties', 'Badge') ? { Badge: p.badge || '' } : {});
+    BQ.fieldOk('Banquet_Parties', 'Badge') ? { Badge: p.badge || '' } : {},
+    BQ.fieldOk('Banquet_Parties', 'NotAttending') ? { NotAttending: !!p.notAttending } : {});
   },
   awardFrom(it) {
     return {

@@ -168,7 +168,7 @@ IM.classicPreview = function (fname, sheets, idx) {
         const keepHolds = m.el.querySelector('#icHolds').checked;
         const changes = res.parties.filter(p => !dups.includes(p)).map(p => ({
           kind: 'party', before: null, after: {
-            name: IM.guessType(p.name) === 'Guest' ? (BQ.cleanPerson(p.name).name || p.name) : p.name, badge: IM.guessType(p.name) === 'Guest' ? BQ.cleanPerson(p.name).badge : '', type: IM.guessType(p.name), aff: '', seats: p.seats, table: known.has(String(p.table)) ? String(p.table) : '',
+            name: IM.guessType(p.name) === 'Guest' ? (BQ.cleanPerson(p.name).name || p.name) : (BQ.stripNA(p.name).name || p.name), badge: IM.guessType(p.name) === 'Guest' ? BQ.cleanPerson(p.name).badge : '', notAttending: BQ.stripNA(p.name).na && !!BQ.stripNA(p.name).name, type: IM.guessType(p.name), aff: '', seats: p.seats, table: known.has(String(p.table)) ? String(p.table) : '',
             guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: [p.note, known.has(String(p.table)) ? '' : 'Was at Table ' + p.table + ' in the imported sheet'].filter(Boolean).join('. '),
             checkedIn: 0, pinned: false, group: ''
           }
@@ -241,7 +241,7 @@ IM.parseAwardGrid = function (grid) {
       a = byKey[key] = { segment: seg, name: seg.replace(/\s+awards?$/i, '') ? seg.replace(/awards$/i, 'Award') : 'Award', logNo: log, recipients: [], notes: [] };
       out.awards.push(a);
     }
-    a.recipients.push({ rank: rank || nm.rankTag, name: nm.name, badge: nm.badge, memo, note, count: 1 });
+    a.recipients.push(Object.assign({ rank: rank || nm.rankTag, name: nm.name, badge: nm.badge, memo, note, count: 1 }, nm.na || /not\s+attending/i.test(note) ? { na: true } : {}));
     if (note) a.notes.push(nm.name + ': ' + note);
   }
   out.awards.forEach(a => { a.kind = a.recipients.length > 1 ? 'Group' : 'Individual'; a.notes = a.notes.join('; '); });
@@ -300,7 +300,7 @@ IM.awardsDialog = async function () {
         if (opts) {
           const newIds = new Set(changes.filter(c => c.after).map(c => c.after.id));
           const items = [];
-          BQ.state.awards.filter(a => newIds.has(a.id)).forEach(a => (a.recipients || []).forEach(r => { if (!(r.pid && BQ.partyById(r.pid))) items.push({ a, r }); }));
+          BQ.state.awards.filter(a => newIds.has(a.id)).forEach(a => (a.recipients || []).forEach(r => { if (!r.na && !(r.pid && BQ.partyById(r.pid))) items.push({ a, r }); }));
           const ppl = [];
           items.forEach(it => {
             const key = BQ.recipKey(it.r);
@@ -370,7 +370,8 @@ IM.docxLines = async function (buf) {
 IM.textLines = text => String(text || '').split(/\r?\n/).map(t => ({ text: t.replace(/\s+/g, ' ').trim(), heading: false, bold: false, list: /^\s*([•·\-*▪●]|\d+[.)])\s+/.test(t) })).filter(l => l.text);
 
 IM.parseHonorRecipient = function (line) {
-  let t = line.replace(/^([•·*▪●]|\d+[.)])\s+/, '').trim();
+  const na = BQ.stripNA(line.replace(/^([•·*▪●]|\d+[.)])\s+/, '').trim());
+  let t = na.name;
   let unit = '';
   const m = t.split(IM.HONOR_SEP);
   if (m.length > 1) { unit = m.slice(1).join(' - ').trim(); t = m[0].trim(); }
@@ -378,7 +379,7 @@ IM.parseHonorRecipient = function (line) {
   const rm = t.match(IM.RANK_PREFIX);
   if (rm) { rank = rm[0].trim(); t = t.slice(rm[0].length).trim(); }
   const c = BQ.cleanPerson(t.replace(/,$/, ''));
-  return { rank, name: c.name, badge: c.badge, unit, count: 1 };
+  return Object.assign({ rank, name: c.name, badge: c.badge, unit, count: 1 }, na.na || c.na ? { na: true } : {});
 };
 
 IM.parseHonors = function (lines) {
@@ -485,7 +486,7 @@ IM.honorsPreview = function (res, source) {
           const ids = new Set(changes.filter(c => c.after && !c.before).map(c => c.after.id));
           const ppl = [];
           BQ.state.awards.filter(a => ids.has(a.id)).forEach(a => (a.recipients || []).forEach(r => {
-            if (r.pid && BQ.partyById(r.pid)) return;
+            if (r.na || (r.pid && BQ.partyById(r.pid))) return;
             const key = BQ.recipKey(r);
             let p = ppl.find(x => x.key === key);
             if (!p) { p = { key, r, awards: [] }; ppl.push(p); }
@@ -543,6 +544,8 @@ IM.parsePaste = function (text) {
     let name = get(r, 'name').replace(/\s+/g, ' ');
     if (!name) return null;
     let badge = get(r, 'badge').replace(/[^0-9A-Za-z]/g, '');
+    const na = BQ.stripNA(name);
+    if (na.na && na.name) name = na.name;
     if (IM.guessType(name) === 'Guest') { const c = BQ.cleanPerson(name); if (c.name) { name = c.name; badge = badge || c.badge; } }
     const t = get(r, 'table').replace(/^table\s*/i, '').replace(/\*$/, '');
     const typeTxt = get(r, 'type').toLowerCase();
@@ -554,7 +557,7 @@ IM.parsePaste = function (text) {
     return {
       vip, vipCount: vip && /^\d+$/.test(vipTxt) ? Number(vipTxt) : 0,
       seatsGiven: parseInt(get(r, 'seats'), 10) > 0, vipGiven: map.vip != null && vipTxt !== '',
-      name, badge, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff: get(r, 'aff'), type, pay,
+      name, badge, notAttending: na.na && !!na.name, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff: get(r, 'aff'), type, pay,
       guests: get(r, 'guests').split(/[;\n]/).map(s => s.trim()).filter(Boolean), notes: get(r, 'notes'), phone: get(r, 'phone'), email: get(r, 'email')
     };
   }).filter(Boolean);
@@ -578,8 +581,8 @@ IM.pasteDialog = function () {
         const vipDef = IM.readVip(m.el, 'ppVip');
         const changes = rows.map(r => ({
           kind: 'party', before: null, after: {
-            name: r.name, badge: r.badge || '', type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
-            phone: r.phone, email: r.email, notes: [r.notes, r.table && !known.has(r.table) ? 'Asked for Table ' + r.table + ' (not in the room)' : ''].filter(Boolean).join('. '), checkedIn: 0, pinned: false, group: '',
+            name: r.name, badge: r.badge || '', notAttending: !!r.notAttending, type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
+            phone: r.phone, email: r.email, notes: [r.notes, r.table && !known.has(r.table) && !r.notAttending ? 'Asked for Table ' + r.table + ' (not in the room)' : ''].filter(Boolean).join('. '), checkedIn: 0, pinned: false, group: '',
             vip: r.vip, vipCount: r.vipCount, vipIn: 0
           }
         }));
@@ -596,7 +599,7 @@ IM.pasteDialog = function () {
     const already = rows.filter(r => r.type === 'Guest' && BQ.sameNameParties(r.name, r.badge, null).length);
     m.el.querySelector('#ppPrev').innerHTML = rows.length ? '<p><b>' + rows.length + '</b> guests, <b>' + rows.reduce((s, r) => s + r.seats, 0) + '</b> seats:</p>' +
       (already.length ? '<p class="warn small">👥 ' + BQ.plural(already.length, 'name') + ' already on the guest list (' + already.slice(0, 5).map(r => BQ.esc(r.name)).join(', ') + (already.length > 5 ? '…' : '') + '). After adding, use <b>Review duplicates</b> on the Guest List to merge the same person or keep two different people.</p>' : '') + '<div class="scroll-box"><table class="grid"><thead><tr><th>Name</th><th>Seats</th><th>Table</th><th>Unit / org</th><th>Type</th></tr></thead><tbody>' +
-      rows.map(r => '<tr><td>' + BQ.esc(r.name) + (r.badge ? ' <span class="badgechip">#' + BQ.esc(r.badge) + '</span>' : '') + '</td><td class="c">' + r.seats + '</td><td class="c">' + BQ.esc(r.table) + '</td><td>' + BQ.esc(r.aff) + '</td><td>' + BQ.typeInfo(r.type).icon + ' ' + BQ.esc(BQ.typeInfo(r.type).label) + '</td></tr>').join('') + '</tbody></table></div>' : '';
+      rows.map(r => '<tr><td>' + BQ.esc(r.name) + (r.badge ? ' <span class="badgechip">#' + BQ.esc(r.badge) + '</span>' : '') + (r.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : '') + '</td><td class="c">' + r.seats + '</td><td class="c">' + BQ.esc(r.table) + '</td><td>' + BQ.esc(r.aff) + '</td><td>' + BQ.typeInfo(r.type).icon + ' ' + BQ.esc(BQ.typeInfo(r.type).label) + '</td></tr>').join('') + '</tbody></table></div>' : '';
   };
   setTimeout(() => ta.focus(), 40);
 };

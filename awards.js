@@ -33,6 +33,7 @@ BQ.segments = function () {
 /* Recipient → seat info */
 BQ.recipientSeat = function (r) {
   const p = r.pid && BQ.partyById(r.pid);
+  if (BQ.recipNA(r)) return { state: 'na', text: 'Not attending', party: p || null };
   if (!p) return { state: 'missing', text: 'Not on guest list' };
   if (!p.table) return { state: 'wait', text: 'No table yet', party: p };
   return { state: 'ok', text: 'Table ' + p.table, table: p.table, party: p };
@@ -41,7 +42,7 @@ BQ.recipientSeat = function (r) {
 /* Recipients that aren't linked to anyone on the guest list */
 BQ.unlinkedRecipients = function () {
   const out = [];
-  BQ.state.awards.forEach(a => (a.recipients || []).forEach(r => { if (r.name && !(r.pid && BQ.partyById(r.pid))) out.push({ a, r }); }));
+  BQ.state.awards.forEach(a => (a.recipients || []).forEach(r => { if (r.name && !r.na && !(r.pid && BQ.partyById(r.pid))) out.push({ a, r }); }));
   return out;
 };
 
@@ -54,6 +55,7 @@ BQ.pickupRoute = function (awards) {
     const num = all.indexOf(a) + 1;
     (a.recipients || []).forEach(r => {
       const s = BQ.recipientSeat(r);
+      if (s.state === 'na') return;   // not coming: nobody to pick up
       stops.push({ award: a, num, r, seat: s, key: s.table ? (g.routeKey[String(s.table)] || 0) : 1e9 });
     });
   });
@@ -129,8 +131,8 @@ BQ.screens.awards = {
           const num = all.indexOf(a) + 1;
           const recs = (a.recipients || []).map(r => {
             const s = BQ.recipientSeat(r);
-            return '<span class="rec r-' + s.state + '" title="' + BQ.esc(s.party ? 'Seated with: ' + s.party.name : 'Not matched to anyone on the guest list') + '">' + BQ.esc(BQ.recipLabel(r)) +
-              (r.count > 1 ? ' ×' + r.count : '') + ' <b>' + BQ.esc(s.table ? 'T' + s.table : s.state === 'wait' ? 'no table' : '⚠') + '</b></span>';
+            return '<span class="rec r-' + s.state + '" title="' + BQ.esc(s.state === 'na' ? 'Not attending' : s.party ? 'Seated with: ' + s.party.name : 'Not matched to anyone on the guest list') + '">' + BQ.esc(BQ.recipLabel(r)) +
+              (r.count > 1 ? ' ×' + r.count : '') + ' <b>' + BQ.esc(s.state === 'na' ? '🚫 not attending' : s.table ? 'T' + s.table : s.state === 'wait' ? 'no table' : '⚠') + '</b></span>';
           }).join('');
           const st = a.status || '';
           return '<div class="award st-' + (st || 'none').replace(/\s/g, '') + (BQ.awardView.sel.has(a.id) ? ' picked' : '') + '" data-aid="' + a.id + '"><input type="checkbox" class="a-sel" data-sel title="Tick to move several awards at once"' + (BQ.awardView.sel.has(a.id) ? ' checked' : '') + '/><div class="a-num">' + num + '</div><div class="a-main">' +
@@ -338,14 +340,14 @@ BQ.awardDialog = function (a) {
         '<input class="unit" data-un="' + i + '" value="' + BQ.esc(r.unit || '') + '" placeholder="Unit"/>' +
         '<input type="number" min="1" class="cnt" data-c="' + i + '" value="' + (r.count || 1) + '" title="How many people walk up for this name"/>' +
         '<span class="rs r-' + s.state + '">' + BQ.esc(s.party ? s.text + ' · with ' + s.party.name : s.text) + '</span>' +
-        (s.state === 'missing' ? '<select class="sm" data-link="' + i + '">' + partyOpts + '</select>' : '<button class="linkbtn" data-unlink="' + i + '">unlink</button>') +
+        (!s.party ? '<select class="sm" data-link="' + i + '">' + partyOpts + '</select><label class="chk small" title="Not on the guest list and not coming"><input type="checkbox" data-na="' + i + '"' + (r.na ? ' checked' : '') + '/> 🚫 not attending</label>' : '<button class="linkbtn" data-unlink="' + i + '">unlink</button>') +
         '<button class="x" data-rm="' + i + '">✕</button></div>';
     }).join('') || '<div class="muted small">No recipients yet.</div>';
     const R = $('#adRecs');
     R.querySelectorAll('[data-i]').forEach(inp => inp.onchange = () => {
       const r = d.recipients[Number(inp.dataset.i)];
       const c = BQ.cleanPerson(inp.value);
-      r.name = c.name; if (c.badge && !r.badge) r.badge = c.badge; r.pid = null; draw();
+      r.name = c.name; if (c.badge && !r.badge) r.badge = c.badge; if (c.na) r.na = true; r.pid = null; draw();
     });
     R.querySelectorAll('[data-rk]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.rk)].rank = inp.value.trim(); });
     R.querySelectorAll('[data-bd]').forEach(inp => inp.onchange = () => { const r = d.recipients[Number(inp.dataset.bd)]; r.badge = inp.value.replace(/[^0-9A-Za-z]/g, ''); if (r.pid !== -1 && !BQ.partyById(r.pid)) { r.pid = null; draw(); } });
@@ -353,6 +355,7 @@ BQ.awardDialog = function (a) {
     R.querySelectorAll('[data-c]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.c)].count = Math.max(1, parseInt(inp.value, 10) || 1); });
     R.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { d.recipients.splice(Number(b.dataset.rm), 1); draw(); });
     R.querySelectorAll('[data-link]').forEach(sel => sel.onchange = () => { d.recipients[Number(sel.dataset.link)].pid = Number(sel.value) || null; draw(); });
+    R.querySelectorAll('[data-na]').forEach(c => c.onchange = () => { d.recipients[Number(c.dataset.na)].na = c.checked; draw(); });
     R.querySelectorAll('[data-unlink]').forEach(b => b.onclick = () => { d.recipients[Number(b.dataset.unlink)].pid = -1; draw(); });
   };
   draw();

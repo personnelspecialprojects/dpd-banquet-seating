@@ -98,7 +98,8 @@ BQ.tables = () => (BQ.state.event && BQ.state.event.layout && BQ.state.event.lay
 BQ.tableByNum = n => BQ.tables().find(t => String(t.n) === String(n));
 BQ.partiesAt = n => BQ.state.parties.filter(p => p.table && String(p.table) === String(n));
 BQ.partyById = id => BQ.state.parties.find(p => p.id === id);
-BQ.unseated = () => BQ.state.parties.filter(p => !p.table);
+BQ.unseated = () => BQ.state.parties.filter(p => !p.table && !p.notAttending);
+BQ.attending = () => BQ.state.parties.filter(p => !p.notAttending);
 
 BQ.tableUse = function (t, ignorePartyId) {
   const ps = BQ.partiesAt(t.n).filter(p => p.id !== ignorePartyId);
@@ -120,7 +121,8 @@ BQ.tableStatus = function (t) {
 };
 
 BQ.stats = function () {
-  const ps = BQ.state.parties, ts = BQ.tables();
+  const ps = BQ.attending(), ts = BQ.tables();
+  const out = BQ.state.parties.filter(p => p.notAttending);
   const requested = ps.reduce((s, p) => s + (Number(p.seats) || 0), 0);
   const seated = ps.filter(p => p.table).reduce((s, p) => s + (Number(p.seats) || 0), 0);
   let cap = 0, open = 0, full = 0, hold = 0, used = 0, resTables = 0, resSeats = 0;
@@ -136,7 +138,8 @@ BQ.stats = function () {
   const vipInvited = ps.reduce((s, p) => s + BQ.vipCount(p), 0);
   const vipArrived = ps.reduce((s, p) => s + Math.min(Number(p.vipIn) || 0, BQ.vipCount(p)), 0);
   return { parties: ps.length, requested, seated, waiting: requested - seated, waitingParties: BQ.unseated().length,
-    cap, open, full, hold, resTables, resSeats, tables: ts.length, arrived, unpaid, vipInvited, vipArrived, vipParties: ps.filter(p => p.vip).length };
+    cap, open, full, hold, resTables, resSeats, tables: ts.length, arrived, unpaid, vipInvited, vipArrived, vipParties: ps.filter(p => p.vip).length,
+    notAttending: out.length, notAttendingSeats: out.reduce((s, p) => s + (Number(p.seats) || 0), 0) };
 };
 
 /* ---------------------------------------------------------------------
@@ -328,7 +331,7 @@ BQ.checkNeed = function (p, need) {
 BQ.allIssues = function () {
   const out = [];
   const s = BQ.settings();
-  BQ.state.parties.forEach(p => {
+  BQ.attending().forEach(p => {
     (p.needs || []).forEach((need, i) => {
       const r = BQ.checkNeed(p, need);
       out.push({ kind: 'need', party: p, need, idx: i, state: r.state, msg: r.msg });
@@ -680,7 +683,8 @@ BQ.recipLabel = function (r, o) {
 // Also accepts a rank on the end ("John_Smith_SGT", "John_Smith_1234_Sr Cpl") and returns it as rankTag.
 BQ.RANK_TOKEN = /^(p\.?\s?o\.?|police officer|officer|ofc\.?|sr\.?\s*cpl\.?|senior\.?\s*corporal|sr\.?\s*corporal|cpl\.?|corporal|sgt\.?|serge?a?nt|lt\.?|lieutenant|capt?\.?|captain|maj\.?|major|det\.?|detective|d\.?c\.?|deputy chief|a\.?c\.?|asst\.?\s*chief|assistant chief|chief|prof(essional)?\s*staff|civ(ilian)?)$/i;
 BQ.parseAwardName = function (raw) {
-  const s = String(raw || '').trim();
+  const naX = BQ.stripNA(String(raw || '').trim());
+  const s = naX.name.trim();
   if (!s) return { name: '', badge: '', rankTag: '' };
   const parts = s.split(/_+/).map(x => x.trim()).filter(Boolean);
   let badge = '', rankTag = '';
@@ -691,7 +695,7 @@ BQ.parseAwardName = function (raw) {
     else break;
   }
   const c = BQ.cleanPerson(parts.join(' '));   // also catches "CARLOS GOMEZ #12963" written with spaces
-  return { name: c.name, badge: badge || c.badge, rankTag };
+  return { name: c.name, badge: badge || c.badge, rankTag, na: naX.na || c.na };
 };
 
 /* ---------------------------------------------------------------------
@@ -727,9 +731,19 @@ BQ.titleCaseName = function (s) {
     .replace(/\bMc([a-z])/g, (m, a) => 'Mc' + a.toUpperCase())
     .replace(/\b(Ii|Iii|Iv|Vi)\b/g, m => m.toUpperCase());
 };
+// "Carlos Gomez - NOT ATTENDING", "(Not attending)", "NOT ATTENDING: Carlos Gomez" → {name: "Carlos Gomez", na: true}
+BQ.NA_END = /[\s,;:.\-–—_/|*(\[]*\b(?:not|non)[\s\-_]*attending\b[\s)\].!*]*$/i;
+BQ.NA_START = /^[\s(\[*]*(?:not|non)[\s\-_]*attending\b[\s)\]:\-–—,*]*/i;
+BQ.stripNA = function (raw) {
+  const s = String(raw || '');
+  if (BQ.NA_END.test(s)) return { name: s.replace(BQ.NA_END, '').trim(), na: true };
+  if (BQ.NA_START.test(s) && s.replace(BQ.NA_START, '').trim()) return { name: s.replace(BQ.NA_START, '').trim(), na: true };
+  return { name: s, na: false };
+};
 BQ.cleanPerson = function (raw, o) {
   o = o || {};
-  let s = String(raw || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  const na = BQ.stripNA(raw);
+  let s = na.name.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   let badge = '', m;
   if ((m = s.match(/#\s*(\d{2,7})\b/))) badge = m[1];
   else if ((m = s.match(/\(\s*(?:badge\s*)?#?\s*(\d{3,7})\s*\)/i))) badge = m[1];
@@ -739,7 +753,7 @@ BQ.cleanPerson = function (raw, o) {
   if (m) s = (s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length));
   s = s.replace(/\s+/g, ' ').replace(/^[\s,\-–]+|[\s,\-–]+$/g, '').trim();
   if (o.titleCase && BQ.isAllCaps(s)) s = BQ.titleCaseName(s);
-  return { name: s, badge };
+  return { name: s, badge, na: na.na };
 };
 BQ.RANK_WORDS = /^(asst\.?\s+chief|assistant\s+chief|deputy\s+chief|chief|major|maj\.|captain|capt\.|lieutenant|lt\.|sergeant|sgt\.|senior\s+corporal|sr\.?\s*corporal|sr\.?\s*cpl\.?|corporal|cpl\.|detective|det\.|police\s+officer|p\.\s?o\.|officer|ofc\.|mr\.|mrs\.|ms\.|dr\.)\s+(?=\S+\s+\S)/i;
 // Comparison key: ignores case, badge numbers, rank words and punctuation
@@ -842,7 +856,7 @@ BQ.scanNameFixes = function (titleCase) {
     const gChanged = guests.some((g, i) => g.name !== p.guests[i]);
     if (c.name !== p.name || (c.badge && !p.badge) || gChanged) {
       fixes.push({ kind: 'party', label: p.name + (gChanged ? ' (+ guest names)' : ''), to: c.name + (c.badge || p.badge ? ' #' + (p.badge || c.badge) : ''),
-        change: BQ.partyChange(p, a => { a.name = c.name || a.name; if (c.badge && !a.badge) a.badge = c.badge; a.guests = guests.map(g => g.name); }) });
+        change: BQ.partyChange(p, a => { a.name = c.name || a.name; if (c.badge && !a.badge) a.badge = c.badge; a.guests = guests.filter(g => !g.na).map(g => g.name); if (c.na && c.name) BQ.markNotAttending(a, true); }) });
     }
   });
   BQ.state.awards.forEach(a => {
@@ -853,7 +867,7 @@ BQ.scanNameFixes = function (titleCase) {
       const c = BQ.cleanPerson(r.name, { titleCase });
       if (c.name !== r.name || (c.badge && !r.badge)) {
         fixes.push({ kind: 'award', label: r.name + ' (award ' + BQ.awardTitle(a) + ')', to: c.name + (c.badge || r.badge ? ' #' + (r.badge || c.badge) : '') });
-        r.name = c.name || r.name; if (c.badge && !r.badge) r.badge = c.badge; changed = true;
+        r.name = c.name || r.name; if (c.badge && !r.badge) r.badge = c.badge; if (c.na && c.name) r.na = true; changed = true;
       }
     });
     if (changed) fixes.push({ kind: 'awardChange', change: { kind: 'award', before: BQ.clone(a), after: na } });
@@ -881,4 +895,64 @@ BQ.markNotDuplicates = function (ids, opts) {
     const keep = (e.settings.notDup || []).filter(k => k.split('|').every(id => live.has(Number(id))));   // forget deleted records
     e.settings.notDup = Array.from(new Set(keep.concat(pairs)));
   })], { noUndo: !(opts && opts.undo) });
+};
+
+/* ---------------------------------------------------------------------
+   Not attending: a checkbox on the guest (notAttending) and on unlinked award recipients (r.na).
+   Not-attending guests hold no table and are left out of seat counts, rosters, A–Z lists and check-in.
+   --------------------------------------------------------------------- */
+BQ.markNotAttending = function (a, on) {
+  a.notAttending = !!on;
+  if (on) { a.table = ''; a.pinned = false; }
+  return a;
+};
+BQ.recipNA = r => { const p = r && r.pid && BQ.partyById(r.pid); return p ? !!p.notAttending : !!(r && r.na); };
+// Find names typed with "- NOT ATTENDING" and turn them into the checkbox
+BQ.scanNotAttending = function () {
+  const changes = [], names = [], freed = [];
+  BQ.state.parties.forEach(p => {
+    const n = BQ.stripNA(p.name);
+    if (n.na && !n.name) n.na = false;   // a record named only "Not attending" is left alone
+    const gNA = (p.guests || []).filter(g => BQ.stripNA(g).na);
+    const stillSeated = p.notAttending && p.table;
+    if (!n.na && !gNA.length && !stillSeated) return;
+    if ((n.na || stillSeated) && p.table) freed.push(String(p.table));
+    if (n.na) names.push(n.name);
+    changes.push(BQ.partyChange(p, a => {
+      if (n.na) { a.name = n.name || a.name; BQ.markNotAttending(a, true); }
+      if (stillSeated) BQ.markNotAttending(a, true);
+      if (gNA.length) {
+        a.guests = a.guests.filter(g => !BQ.stripNA(g).na);
+        a.notes = [a.notes, 'Not attending: ' + gNA.map(g => BQ.stripNA(g).name).join(', ')].filter(Boolean).join(' | ');
+        names.push(...gNA.map(g => BQ.stripNA(g).name + ' (guest of ' + (n.name || p.name) + ')'));
+      }
+    }));
+  });
+  BQ.state.awards.forEach(a => {
+    if (!(a.recipients || []).some(r => BQ.stripNA(r.name).na)) return;
+    const na = BQ.clone(a);
+    na.recipients.forEach(r => { const x = BQ.stripNA(r.name); if (x.na) { r.name = x.name || r.name; r.na = true; if (!names.includes(x.name)) names.push(x.name + ' (award)'); } });
+    changes.push({ kind: 'award', before: BQ.clone(a), after: na });
+  });
+  return { changes, names, freed };
+};
+BQ.fixNotAttendingLabels = async function () {
+  const f = BQ.scanNotAttending();
+  if (!f.changes.length) return 0;
+  const since = BQ.history.length;
+  const ok = await BQ.commit('Marked ' + BQ.plural(f.names.length || f.changes.length, 'name') + ' as not attending (from “NOT ATTENDING” in the name)', f.changes);
+  if (!ok) return 0;
+  // award recipients now point at the cleaned names
+  if (BQ.relinkableRecipients().length) await BQ.relinkRecipients();
+  // a recipient labeled "not attending" means their guest record isn't coming either
+  const ids = new Set();
+  BQ.state.awards.forEach(aw => (aw.recipients || []).forEach(r => { const p = r.na && r.pid && BQ.partyById(r.pid); if (p && !p.notAttending) ids.add(p.id); }));
+  if (ids.size) {
+    Array.from(ids).forEach(id => { const p = BQ.partyById(id); if (p.table) f.freed.push(String(p.table)); });
+    await BQ.commit('Marked award recipients’ guest records not attending', Array.from(ids).map(id => BQ.partyChange(BQ.partyById(id), x => BQ.markNotAttending(x, true))));
+  }
+  BQ.mergeHistory(since, 'Marked not attending from name labels');
+  BQ.ui && BQ.ui.toast('Found “NOT ATTENDING” on ' + BQ.plural(f.names.length || f.changes.length, 'name') + '. Removed it from the name and ticked “Not attending”' +
+    (f.freed.length ? '. Freed seats at Table ' + Array.from(new Set(f.freed)).join(', ') : '') + '.', 'ok', { label: 'Undo', onClick: () => BQ.undo() });
+  return f.changes.length;
 };
