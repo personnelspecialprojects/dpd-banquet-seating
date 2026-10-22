@@ -139,7 +139,7 @@ BQ.stats = function () {
   const vipArrived = ps.reduce((s, p) => s + Math.min(Number(p.vipIn) || 0, BQ.vipCount(p)), 0);
   return { parties: ps.length, requested, seated, waiting: requested - seated, waitingParties: BQ.unseated().length,
     cap, open, full, hold, resTables, resSeats, tables: ts.length, arrived, unpaid, vipInvited, vipArrived, vipParties: ps.filter(p => p.vip).length,
-    notAttending: out.length, notAttendingSeats: out.reduce((s, p) => s + (Number(p.seats) || 0), 0) };
+    notAttending: out.length, notAttendingSeats: out.reduce((s, p) => s + (Number(p.seats) || 0), 0), noResponse: ps.filter(p => p.noResponse).length };
 };
 
 /* ---------------------------------------------------------------------
@@ -683,7 +683,7 @@ BQ.recipLabel = function (r, o) {
 // Also accepts a rank on the end ("John_Smith_SGT", "John_Smith_1234_Sr Cpl") and returns it as rankTag.
 BQ.RANK_TOKEN = /^(p\.?\s?o\.?|police officer|officer|ofc\.?|sr\.?\s*cpl\.?|senior\.?\s*corporal|sr\.?\s*corporal|cpl\.?|corporal|sgt\.?|serge?a?nt|lt\.?|lieutenant|capt?\.?|captain|maj\.?|major|det\.?|detective|d\.?c\.?|deputy chief|a\.?c\.?|asst\.?\s*chief|assistant chief|chief|prof(essional)?\s*staff|civ(ilian)?)$/i;
 BQ.parseAwardName = function (raw) {
-  const naX = BQ.stripNA(String(raw || '').trim());
+  const naX = BQ.stripStatus(String(raw || '').trim());
   const s = naX.name.trim();
   if (!s) return { name: '', badge: '', rankTag: '' };
   const parts = s.split(/_+/).map(x => x.trim()).filter(Boolean);
@@ -695,7 +695,7 @@ BQ.parseAwardName = function (raw) {
     else break;
   }
   const c = BQ.cleanPerson(parts.join(' '));   // also catches "CARLOS GOMEZ #12963" written with spaces
-  return { name: c.name, badge: badge || c.badge, rankTag, na: naX.na || c.na };
+  return { name: c.name, badge: badge || c.badge, rankTag, na: naX.na || c.na, nr: !(naX.na || c.na) && (naX.nr || c.nr) };
 };
 
 /* ---------------------------------------------------------------------
@@ -742,7 +742,7 @@ BQ.stripNA = function (raw) {
 };
 BQ.cleanPerson = function (raw, o) {
   o = o || {};
-  const na = BQ.stripNA(raw);
+  const na = BQ.stripStatus(raw);
   let s = na.name.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   let badge = '', m;
   if ((m = s.match(/#\s*(\d{2,7})\b/))) badge = m[1];
@@ -753,7 +753,7 @@ BQ.cleanPerson = function (raw, o) {
   if (m) s = (s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length));
   s = s.replace(/\s+/g, ' ').replace(/^[\s,\-–]+|[\s,\-–]+$/g, '').trim();
   if (o.titleCase && BQ.isAllCaps(s)) s = BQ.titleCaseName(s);
-  return { name: s, badge, na: na.na };
+  return { name: s, badge, na: na.na, nr: na.nr };
 };
 BQ.RANK_WORDS = /^(asst\.?\s+chief|assistant\s+chief|deputy\s+chief|chief|major|maj\.|captain|capt\.|lieutenant|lt\.|sergeant|sgt\.|senior\s+corporal|sr\.?\s*corporal|sr\.?\s*cpl\.?|corporal|cpl\.|detective|det\.|police\s+officer|p\.\s?o\.|officer|ofc\.|mr\.|mrs\.|ms\.|dr\.)\s+(?=\S+\s+\S)/i;
 // Comparison key: ignores case, badge numbers, rank words and punctuation
@@ -856,7 +856,7 @@ BQ.scanNameFixes = function (titleCase) {
     const gChanged = guests.some((g, i) => g.name !== p.guests[i]);
     if (c.name !== p.name || (c.badge && !p.badge) || gChanged) {
       fixes.push({ kind: 'party', label: p.name + (gChanged ? ' (+ guest names)' : ''), to: c.name + (c.badge || p.badge ? ' #' + (p.badge || c.badge) : ''),
-        change: BQ.partyChange(p, a => { a.name = c.name || a.name; if (c.badge && !a.badge) a.badge = c.badge; a.guests = guests.filter(g => !g.na).map(g => g.name); if (c.na && c.name) BQ.markNotAttending(a, true); }) });
+        change: BQ.partyChange(p, a => { a.name = c.name || a.name; if (c.badge && !a.badge) a.badge = c.badge; a.guests = guests.filter(g => !g.na).map(g => g.name); if (c.na && c.name) BQ.markNotAttending(a, true); else if (c.nr && c.name) BQ.markNoResponse(a, true); }) });
     }
   });
   BQ.state.awards.forEach(a => {
@@ -867,7 +867,7 @@ BQ.scanNameFixes = function (titleCase) {
       const c = BQ.cleanPerson(r.name, { titleCase });
       if (c.name !== r.name || (c.badge && !r.badge)) {
         fixes.push({ kind: 'award', label: r.name + ' (award ' + BQ.awardTitle(a) + ')', to: c.name + (c.badge || r.badge ? ' #' + (r.badge || c.badge) : '') });
-        r.name = c.name || r.name; if (c.badge && !r.badge) r.badge = c.badge; if (c.na && c.name) r.na = true; changed = true;
+        r.name = c.name || r.name; if (c.badge && !r.badge) r.badge = c.badge; if (c.na && c.name) r.na = true; else if (c.nr && c.name) r.nr = true; changed = true;
       }
     });
     if (changed) fixes.push({ kind: 'awardChange', change: { kind: 'award', before: BQ.clone(a), after: na } });
@@ -903,56 +903,100 @@ BQ.markNotDuplicates = function (ids, opts) {
    --------------------------------------------------------------------- */
 BQ.markNotAttending = function (a, on) {
   a.notAttending = !!on;
-  if (on) { a.table = ''; a.pinned = false; }
+  if (on) { a.table = ''; a.pinned = false; a.noResponse = false; }
   return a;
 };
 BQ.recipNA = r => { const p = r && r.pid && BQ.partyById(r.pid); return p ? !!p.notAttending : !!(r && r.na); };
 // Find names typed with "- NOT ATTENDING" and turn them into the checkbox
+// Same idea for "NO RESPONSE" (hasn't answered yet). They keep their seat; it's a status flag only.
+BQ.NR_END = /[\s,;:.\-–—_/|*(\[]*\bno[\s\-_]*(?:response|reply|rsvp)\b[\s)\].!*]*$/i;
+BQ.NR_START = /^[\s(\[*]*no[\s\-_]*(?:response|reply|rsvp)\b[\s)\]:\-–—,*]*/i;
+BQ.stripNR = function (raw) {
+  const s = String(raw || '');
+  if (BQ.NR_END.test(s)) return { name: s.replace(BQ.NR_END, '').trim(), nr: true };
+  if (BQ.NR_START.test(s) && s.replace(BQ.NR_START, '').trim()) return { name: s.replace(BQ.NR_START, '').trim(), nr: true };
+  return { name: s, nr: false };
+};
+// Either label, in either order ("Carlos Gomez - NO RESPONSE", "Ana Reyes (Not attending)")
+BQ.stripStatus = function (raw) {
+  let name = String(raw || ''), na = false, nr = false;
+  for (let i = 0; i < 2; i++) {
+    const a = BQ.stripNA(name); if (a.na && a.name) { name = a.name; na = true; }
+    const b = BQ.stripNR(name); if (b.nr && b.name) { name = b.name; nr = true; }
+  }
+  return { name, na, nr: nr && !na };
+};
+BQ.markNoResponse = function (a, on) {
+  a.noResponse = !!on;
+  if (on) a.notAttending = false;
+  return a;
+};
+BQ.recipNR = r => { const p = r && r.pid && BQ.partyById(r.pid); return p ? !!p.noResponse : !!(r && r.nr); };
+
+// Find names typed with "- NOT ATTENDING" or "- NO RESPONSE" and turn them into the checkboxes
 BQ.scanNotAttending = function () {
-  const changes = [], names = [], freed = [];
+  const changes = [], na = [], nr = [], freed = [];
   BQ.state.parties.forEach(p => {
-    const n = BQ.stripNA(p.name);
-    if (n.na && !n.name) n.na = false;   // a record named only "Not attending" is left alone
-    const gNA = (p.guests || []).filter(g => BQ.stripNA(g).na);
+    const n = BQ.stripStatus(p.name);
+    const gl = (p.guests || []).map(g => Object.assign({ raw: g }, BQ.stripStatus(g)));
+    const gNA = gl.filter(g => g.na), gNR = gl.filter(g => g.nr);
     const stillSeated = p.notAttending && p.table;
-    if (!n.na && !gNA.length && !stillSeated) return;
+    if (!n.na && !n.nr && !gNA.length && !gNR.length && !stillSeated) return;
     if ((n.na || stillSeated) && p.table) freed.push(String(p.table));
-    if (n.na) names.push(n.name);
+    if (n.na) na.push(n.name);
+    if (n.nr) nr.push(n.name);
     changes.push(BQ.partyChange(p, a => {
-      if (n.na) { a.name = n.name || a.name; BQ.markNotAttending(a, true); }
-      if (stillSeated) BQ.markNotAttending(a, true);
-      if (gNA.length) {
-        a.guests = a.guests.filter(g => !BQ.stripNA(g).na);
-        a.notes = [a.notes, 'Not attending: ' + gNA.map(g => BQ.stripNA(g).name).join(', ')].filter(Boolean).join(' | ');
-        names.push(...gNA.map(g => BQ.stripNA(g).name + ' (guest of ' + (n.name || p.name) + ')'));
+      if (n.na || n.nr) a.name = n.name || a.name;
+      if (n.na || stillSeated) BQ.markNotAttending(a, true);
+      if (n.nr) BQ.markNoResponse(a, true);
+      if (gNA.length || gNR.length) {
+        a.guests = gl.filter(g => !g.na).map(g => g.name);
+        const who = n.name || p.name;
+        if (gNA.length) { a.notes = [a.notes, 'Not attending: ' + gNA.map(g => g.name).join(', ')].filter(Boolean).join(' | '); na.push(...gNA.map(g => g.name + ' (guest of ' + who + ')')); }
+        if (gNR.length) { a.notes = [a.notes, 'No response yet: ' + gNR.map(g => g.name).join(', ')].filter(Boolean).join(' | '); nr.push(...gNR.map(g => g.name + ' (guest of ' + who + ')')); }
       }
     }));
   });
   BQ.state.awards.forEach(a => {
-    if (!(a.recipients || []).some(r => BQ.stripNA(r.name).na)) return;
-    const na = BQ.clone(a);
-    na.recipients.forEach(r => { const x = BQ.stripNA(r.name); if (x.na) { r.name = x.name || r.name; r.na = true; if (!names.includes(x.name)) names.push(x.name + ' (award)'); } });
-    changes.push({ kind: 'award', before: BQ.clone(a), after: na });
+    if (!(a.recipients || []).some(r => { const x = BQ.stripStatus(r.name); return x.na || x.nr; })) return;
+    const after = BQ.clone(a);
+    after.recipients.forEach(r => {
+      const x = BQ.stripStatus(r.name);
+      if (!x.na && !x.nr) return;
+      r.name = x.name || r.name;
+      if (x.na) { r.na = true; r.nr = false; na.push(x.name + ' (award)'); }
+      if (x.nr) { r.nr = true; nr.push(x.name + ' (award)'); }
+    });
+    changes.push({ kind: 'award', before: BQ.clone(a), after });
   });
-  return { changes, names, freed };
+  const uniq = l => Array.from(new Set(l.map(x => x.replace(/ \((award|guest of .*)\)$/, '').toLowerCase())));
+  return { changes, na: uniq(na), nr: uniq(nr), names: uniq(na.concat(nr)), freed };
 };
 BQ.fixNotAttendingLabels = async function () {
   const f = BQ.scanNotAttending();
   if (!f.changes.length) return 0;
   const since = BQ.history.length;
-  const ok = await BQ.commit('Marked ' + BQ.plural(f.names.length || f.changes.length, 'name') + ' as not attending (from “NOT ATTENDING” in the name)', f.changes);
+  const ok = await BQ.commit('Ticked Not attending / No response from labels in ' + BQ.plural(f.names.length || f.changes.length, 'name'), f.changes);
   if (!ok) return 0;
   // award recipients now point at the cleaned names
   if (BQ.relinkableRecipients().length) await BQ.relinkRecipients();
-  // a recipient labeled "not attending" means their guest record isn't coming either
-  const ids = new Set();
-  BQ.state.awards.forEach(aw => (aw.recipients || []).forEach(r => { const p = r.na && r.pid && BQ.partyById(r.pid); if (p && !p.notAttending) ids.add(p.id); }));
-  if (ids.size) {
-    Array.from(ids).forEach(id => { const p = BQ.partyById(id); if (p.table) f.freed.push(String(p.table)); });
-    await BQ.commit('Marked award recipients’ guest records not attending', Array.from(ids).map(id => BQ.partyChange(BQ.partyById(id), x => BQ.markNotAttending(x, true))));
-  }
-  BQ.mergeHistory(since, 'Marked not attending from name labels');
-  BQ.ui && BQ.ui.toast('Found “NOT ATTENDING” on ' + BQ.plural(f.names.length || f.changes.length, 'name') + '. Removed it from the name and ticked “Not attending”' +
+  // a labeled award recipient's guest record gets the same status
+  const toNA = new Set(), toNR = new Set();
+  BQ.state.awards.forEach(aw => (aw.recipients || []).forEach(r => {
+    const p = r.pid && BQ.partyById(r.pid);
+    if (!p) return;
+    if (r.na && !p.notAttending) toNA.add(p.id);
+    else if (r.nr && !r.na && !p.noResponse && !p.notAttending) toNR.add(p.id);
+  }));
+  const ch = [];
+  toNA.forEach(id => { const p = BQ.partyById(id); if (p.table) f.freed.push(String(p.table)); ch.push(BQ.partyChange(p, x => BQ.markNotAttending(x, true))); });
+  toNR.forEach(id => { if (!toNA.has(id)) ch.push(BQ.partyChange(BQ.partyById(id), x => BQ.markNoResponse(x, true))); });
+  if (ch.length) await BQ.commit('Gave award recipients’ guest records the same status', ch);
+  BQ.mergeHistory(since, 'Not attending / No response from name labels');
+  const parts = [];
+  if (f.na.length) parts.push(BQ.plural(f.na.length, 'name') + ' marked “Not attending”');
+  if (f.nr.length) parts.push(BQ.plural(f.nr.length, 'name') + ' marked “No response”');
+  BQ.ui && BQ.ui.toast('Found status labels in names and moved them to the checkboxes: ' + (parts.join(', ') || BQ.plural(f.changes.length, 'record') + ' updated') +
     (f.freed.length ? '. Freed seats at Table ' + Array.from(new Set(f.freed)).join(', ') : '') + '.', 'ok', { label: 'Undo', onClick: () => BQ.undo() });
   return f.changes.length;
 };

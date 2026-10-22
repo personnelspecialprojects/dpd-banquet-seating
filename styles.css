@@ -629,3 +629,5 @@ tr.natr td:first-child, tr.natr:hover td { opacity: 1; }
 @media print {
   .ptix tr.grp td { background: #F6E3E3 !important; color: #8B1A1A; font-weight: 700; font-size: 11pt; height: auto; padding: 6px; border-top: 2px solid #8B1A1A; }
 }
+.nrchip { display: inline-block; background: #EEF0FF; color: #3F3D9E; border: 1px solid rgba(63,61,158,.25); border-radius: 999px; padding: 0 8px; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: 1px; }
+.rec .nrchip { padding: 0 4px; font-size: 10.5px; }

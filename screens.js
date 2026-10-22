@@ -220,7 +220,7 @@ BQ.showHelp = function () {
    --------------------------------------------------------------------- */
 BQ.ui.openParty = function (p, defaults) {
   const isNew = !p;
-  const d = isNew ? Object.assign({ name: '', badge: '', notAttending: false, type: 'Guest', aff: '', seats: 1, table: '', guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: '', pinned: false, checkedIn: 0, vip: false, vipCount: 0, vipIn: 0 }, defaults || {}) : BQ.clone(p);
+  const d = isNew ? Object.assign({ name: '', badge: '', notAttending: false, noResponse: false, type: 'Guest', aff: '', seats: 1, table: '', guests: [], needs: [], pay: '', payNote: '', phone: '', email: '', notes: '', pinned: false, checkedIn: 0, vip: false, vipCount: 0, vipIn: 0 }, defaults || {}) : BQ.clone(p);
   d.needs = d.needs || [];
   const affs = Array.from(new Set(BQ.state.parties.map(x => x.aff).filter(Boolean))).sort();
   const tables = BQ.tables().slice().sort((a, b) => BQ.numSort(a.n, b.n));
@@ -242,7 +242,8 @@ BQ.ui.openParty = function (p, defaults) {
     '<div><label>&nbsp;</label><label class="chk"><input type="checkbox" id="pfPin"' + (d.pinned ? ' checked' : '') + '/> 📌 Lock at this table <span class="muted">(can’t be dragged off or moved by auto-seat)</span></label></div></div>' +
     '<div class="field vipbox"><label class="chk"><input type="checkbox" id="pfVip"' + (d.vip ? ' checked' : '') + '/> ⭐ <b>Invited to the VIP reception</b> <span class="muted">(before the banquet, no seating)</span></label>' +
     '<span id="pfVipN"' + (d.vip ? '' : ' hidden') + '> · <b>VIP tickets</b> <input id="pfVipCount" type="number" min="1" value="' + (d.vipCount || d.seats || 1) + '" style="width:70px"/> <span class="muted">(can differ from seats)</span></span></div>' +
-    '<div class="field nabox"><label class="chk"><input type="checkbox" id="pfNA"' + (d.notAttending ? ' checked' : '') + '/> 🚫 <b>Not attending</b> <span class="muted">(said they can’t come)</span></label>' +
+    '<div class="field nabox"><label class="chk"><input type="checkbox" id="pfNR"' + (d.noResponse && !d.notAttending ? ' checked' : '') + '/> ❔ <b>No response</b> <span class="muted">(hasn’t answered yet; keeps their seat)</span></label><br>' +
+    '<label class="chk"><input type="checkbox" id="pfNA"' + (d.notAttending ? ' checked' : '') + '/> 🚫 <b>Not attending</b> <span class="muted">(said they can’t come)</span></label>' +
     '<div class="muted small" id="pfNAHint"' + (d.notAttending ? '' : ' hidden') + '>They stay on the guest list (and the ticket pick-up sheet), but they’re taken off their table and left out of seat counts, rosters, A–Z lists and check-in. Their awards show “Not attending”.</div></div>' +
     '<div class="field"><label>Guest names <span class="muted">(optional, one per line)</span> <span id="pfNamed" class="muted"></span></label><textarea id="pfGuests" rows="3" placeholder="Leave blank if you only know the count">' + BQ.esc((d.guests || []).join('\n')) + '</textarea></div>' +
     '<div class="field"><label>Special requests</label><div id="pfNeeds"></div>' +
@@ -263,14 +264,19 @@ BQ.ui.openParty = function (p, defaults) {
   const namedInfo = () => { const n = $('#pfGuests').value.split(/\n/).filter(x => x.trim()).length; $('#pfNamed').textContent = n ? '· ' + n + ' named' : ''; };
   $('#pfGuests').oninput = namedInfo; namedInfo();
   const pullBadge = () => {
-    const na = BQ.stripNA($('#pfName').value);
-    if (na.na && na.name) { $('#pfName').value = na.name; $('#pfNA').checked = true; naSync(); BQ.ui.toast('Ticked “Not attending” and took that phrase out of the name.'); }
+    const na = BQ.stripStatus($('#pfName').value);
+    if ((na.na || na.nr) && na.name) {
+      $('#pfName').value = na.name;
+      if (na.na) { $('#pfNA').checked = true; $('#pfNR').checked = false; } else { $('#pfNR').checked = true; $('#pfNA').checked = false; }
+      naSync(); BQ.ui.toast('Ticked “' + (na.na ? 'Not attending' : 'No response') + '” and took that phrase out of the name.');
+    }
     const c = BQ.cleanPerson($('#pfName').value);
     if (c.badge && c.name) { $('#pfName').value = c.name; if (!$('#pfBadge').value.trim()) $('#pfBadge').value = c.badge; }
     dupNote();
   };
   const naSync = () => { const on = $('#pfNA').checked; $('#pfNAHint').hidden = !on; $('#pfTable').disabled = on; $('#pfPin').disabled = on; };
-  $('#pfNA').onchange = naSync;
+  $('#pfNA').onchange = () => { if ($('#pfNA').checked) $('#pfNR').checked = false; naSync(); };
+  $('#pfNR').onchange = () => { if ($('#pfNR').checked) $('#pfNA').checked = false; naSync(); };
   setTimeout(naSync);
   const dupNote = () => {
     const box = $('#pfDupNote');
@@ -347,8 +353,9 @@ BQ.ui.openParty = function (p, defaults) {
     out.vipCount = out.vip ? Math.max(1, parseInt($('#pfVipCount').value, 10) || out.seats) : 0;
     if (!out.vip) out.vipIn = 0;
     out.needs = d.needs.filter(n => !BQ.NEEDS[n.type].target || n.target || n.text);
-    const na = BQ.stripNA(out.name);
-    if (na.na && na.name) { out.name = na.name; out.notAttending = true; } else out.notAttending = $('#pfNA').checked;
+    const na = BQ.stripStatus(out.name);
+    out.notAttending = $('#pfNA').checked; out.noResponse = $('#pfNR').checked;
+    if ((na.na || na.nr) && na.name) { out.name = na.name; if (na.na) out.notAttending = true; else out.noResponse = true; }
     if (out.notAttending) BQ.markNotAttending(out, true);
     if (!BQ.isOrg(out)) { const c = BQ.cleanPerson(out.name); if (c.badge && c.name) { out.name = c.name; if (!out.badge) out.badge = c.badge; } }
     return out;
@@ -443,7 +450,7 @@ BQ.screens.home = {
       '<div class="hero"><div><h1>' + BQ.esc(e.title) + '</h1><div class="muted">' + (e.date ? new Date(e.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Date not set') +
       (e.venue ? ' · ' + BQ.esc(e.venue) : '') + '</div></div>' + (days != null && days >= 0 ? '<div class="countdown"><b>' + days + '</b><span>day' + (days === 1 ? '' : 's') + ' to go</span></div>' : '') + '</div>' +
       '<div class="stats">' +
-      '<div class="stat"><b>' + s.requested + '</b><span>seats requested</span><small>' + BQ.plural(s.parties, 'party').replace('partys', 'parties') + (s.vipInvited ? ' · ⭐ ' + s.vipInvited + ' at VIP reception' : '') + (s.notAttending ? ' · 🚫 ' + s.notAttending + ' not attending' : '') + '</small></div>' +
+      '<div class="stat"><b>' + s.requested + '</b><span>seats requested</span><small>' + BQ.plural(s.parties, 'party').replace('partys', 'parties') + (s.vipInvited ? ' · ⭐ ' + s.vipInvited + ' at VIP reception' : '') + (s.notAttending ? ' · 🚫 ' + s.notAttending + ' not attending' : '') + (s.noResponse ? ' · ❔ ' + s.noResponse + ' no response' : '') + '</small></div>' +
       '<div class="stat ok"><b>' + s.seated + '</b><span>seated</span><div class="meter"><div style="width:' + pctSeated + '%"></div></div></div>' +
       '<div class="stat ' + (s.waiting ? 'warn' : '') + '"><b>' + s.waiting + '</b><span>waiting for a table</span></div>' +
       '<div class="stat"><b>' + s.open + '</b><span>open seats in the room</span><small>' + pctRoom + '% of ' + s.cap + ' chairs used</small></div>' +
@@ -476,7 +483,7 @@ BQ.screens.guests = {
   title: 'Guest List',
   render(main) {
     const V = BQ.guestView;
-    const filters = [['all', 'Everyone'], ['waiting', 'Waiting for a seat'], ['seated', 'Seated'], ['needs', 'Has requests'], ['problems', 'Request not met'], ['unpaid', 'Not paid'], ['orgs', 'Units & orgs'], ['vip', '⭐ VIP reception'], ['awards', '🏆 Award recipients'], ['na', '🚫 Not attending']].concat(BQ.lastImport ? [['new', '🆕 Just imported']] : [])
+    const filters = [['all', 'Everyone'], ['waiting', 'Waiting for a seat'], ['seated', 'Seated'], ['needs', 'Has requests'], ['problems', 'Request not met'], ['unpaid', 'Not paid'], ['orgs', 'Units & orgs'], ['vip', '⭐ VIP reception'], ['awards', '🏆 Award recipients'], ['nr', '❔ No response'], ['na', '🚫 Not attending']].concat(BQ.lastImport ? [['new', '🆕 Just imported']] : [])
       .filter(f => f[0] !== 'unpaid' || BQ.config.trackPayment);
     main.innerHTML = '<div class="page wide">' +
       '<div class="page-head"><h1>Guest List</h1><span class="grow"></span>' +
@@ -500,6 +507,7 @@ BQ.screens.guests = {
       switch (V.filter) {
         case 'waiting': return !p.table && !p.notAttending;
         case 'na': return !!p.notAttending;
+        case 'nr': return !!p.noResponse && !p.notAttending;
         case 'seated': return !!p.table;
         case 'needs': return (p.needs || []).length > 0;
         case 'problems': return BQ.partyIssueState(p) === 'bad';
@@ -530,7 +538,7 @@ BQ.screens.guests = {
       rows.map(p => {
         const ti = BQ.typeInfo(p.type);
         const needs = (p.needs || []).map(n => { const r = BQ.checkNeed(p, n); return '<span class="need n-' + r.state + '" title="' + BQ.esc(BQ.needText(n) + ' — ' + r.msg) + '">' + (BQ.NEEDS[n.type] || {}).icon + '</span>'; }).join('');
-        return '<tr data-pid="' + p.id + '" class="' + (V.sel.has(p.id) ? 'picked' : '') + (p.notAttending ? ' natr' : '') + '"><td class="c"><input type="checkbox" data-sel' + (V.sel.has(p.id) ? ' checked' : '') + '/></td><td><b>' + BQ.esc(p.name) + '</b>' + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + (p.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : '') + (p.vip ? ' <span class="vipchip" title="VIP reception tickets">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + '</span>' : '') + (p.pinned ? ' 📌' : '') + (p.group ? ' <span class="muted" title="Split party">⛓</span>' : '') +
+        return '<tr data-pid="' + p.id + '" class="' + (V.sel.has(p.id) ? 'picked' : '') + (p.notAttending ? ' natr' : '') + '"><td class="c"><input type="checkbox" data-sel' + (V.sel.has(p.id) ? ' checked' : '') + '/></td><td><b>' + BQ.esc(p.name) + '</b>' + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + (p.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : p.noResponse ? ' <span class="nrchip">❔ No response</span>' : '') + (p.vip ? ' <span class="vipchip" title="VIP reception tickets">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + '</span>' : '') + (p.pinned ? ' 📌' : '') + (p.group ? ' <span class="muted" title="Split party">⛓</span>' : '') +
           ((p.guests || []).length ? '<div class="muted small">' + BQ.esc(p.guests.join(', ')) + '</div>' : '') + '</td>' +
           '<td>' + ti.icon + ' ' + BQ.esc(ti.label) + '</td><td>' + BQ.esc(p.aff) + '</td><td class="c">' + p.seats + '</td>' +
           '<td class="c">' + (p.notAttending ? '<span class="muted">—</span>' : p.table ? '<b>' + BQ.esc(p.table) + '</b>' : '<button class="btn sm" data-find="' + p.id + '">Find a seat</button>') + '</td>' +
@@ -580,7 +588,7 @@ BQ.recipientPartyIds = function () {
    --------------------------------------------------------------------- */
 BQ.partySummaryHtml = function (p) {
   const aw = BQ.awardLinksTo(p.id);
-  return '<b>' + BQ.esc(p.name) + '</b>' + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + (p.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : '') +
+  return '<b>' + BQ.esc(p.name) + '</b>' + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + (p.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : p.noResponse ? ' <span class="nrchip">❔ No response</span>' : '') +
     '<div class="muted small">' + [BQ.typeInfo(p.type).icon + ' ' + BQ.esc(BQ.typeInfo(p.type).label), p.aff ? BQ.esc(p.aff) : '', BQ.plural(p.seats, 'seat'),
       p.table ? 'Table ' + BQ.esc(p.table) : 'not seated', p.vip ? '⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') : '', p.pinned ? '📌 locked' : ''].filter(Boolean).join(' · ') + '</div>' +
     (aw.length ? '<div class="small">🏆 ' + aw.map(a => BQ.esc(a.name || 'Award')).join(', ') + '</div>' : '') +
@@ -735,6 +743,8 @@ BQ.bulkEditDialog = function (ids, note) {
     sec('⭐ VIP reception: remove invitation', '', 'Remove', 'bkVipOff', '') +
     sec('🚫 Not attending', 'Mark as not coming (takes them off their tables)', 'Mark not attending', 'bkNAOn') +
     sec('🚫 Attending again', 'Clear “Not attending” (they go back to the waiting list)', 'Mark attending', 'bkNAOff', '') +
+    sec('❔ No response', 'Mark as hasn’t answered yet (keeps their seats)', 'Mark no response', 'bkNROn') +
+    sec('❔ Responded', 'Clear “No response”', 'Clear', 'bkNROff', '') +
     sec('Add a special request', '<select id="bkNeed">' + simpleNeeds.map(k => '<option value="' + k + '">' + BQ.NEEDS[k].icon + ' ' + BQ.esc(BQ.NEEDS[k].label) + '</option>').join('') + '</select>' +
       ' <select id="bkZone" hidden>' + zones.map(z => '<option>' + BQ.esc(z.name) + '</option>').join('') + '</select><input id="bkNote" placeholder="Describe the request" hidden/>', 'Add', 'bkNeedAdd') +
     sec('Remove a special request', '<select id="bkNeedRm">' + Object.keys(BQ.NEEDS).map(k => '<option value="' + k + '">' + BQ.NEEDS[k].icon + ' ' + BQ.esc(BQ.NEEDS[k].label) + '</option>').join('') + '</select>', 'Remove', 'bkNeedDel', '') +
@@ -766,6 +776,8 @@ BQ.bulkEditDialog = function (ids, note) {
   };
   $('#bkNAOn').onclick = () => run('Marked not attending', a => { BQ.markNotAttending(a, true); }, p => !p.notAttending);
   $('#bkNAOff').onclick = () => run('Marked attending again', a => { a.notAttending = false; }, p => !!p.notAttending);
+  $('#bkNROn').onclick = () => run('Marked no response', a => { BQ.markNoResponse(a, true); }, p => !p.noResponse);
+  $('#bkNROff').onclick = () => run('Cleared no response', a => { a.noResponse = false; }, p => !!p.noResponse);
   $('#bkVipOff').onclick = () => run('Removed VIP reception', a => { a.vip = false; a.vipCount = 0; a.vipIn = 0; });
   $('#bkNeedAdd').onclick = () => {
     const k = $('#bkNeed').value;
@@ -976,7 +988,7 @@ BQ.screens.checkin = {
       // both numbers, always: seats for the banquet, tickets for the VIP reception
       const vipNote = '<div class="ci-nums"><span class="numchip">🍽️ ' + BQ.plural(p.seats, 'seat') + '</span>' +
         (p.vip ? '<span class="vipchip">⭐ ' + BQ.plural(BQ.vipCount(p), 'VIP ticket') + (vipMode ? '' : ' · ' + Math.min(p.vipIn || 0, BQ.vipCount(p)) + ' in') + '</span>' : '<span class="muted small">no VIP reception</span>') + '</div>';
-      return '<div class="ci' + (done ? ' done' : '') + '"><div class="ci-who"><b>' + BQ.esc(x.name) + '</b>' + (p.notAttending ? ' <span class="nachip">🚫 Marked not attending</span>' : '') +
+      return '<div class="ci' + (done ? ' done' : '') + '"><div class="ci-who"><b>' + BQ.esc(x.name) + '</b>' + (p.notAttending ? ' <span class="nachip">🚫 Marked not attending</span>' : p.noResponse ? ' <span class="nrchip">❔ No response</span>' : '') +
         '<div class="muted small">' + (x.leader ? (BQ.isOrg(p) ? BQ.esc(BQ.typeInfo(p.type).label) : 'Party of ' + p.seats) : 'with ' + BQ.esc(p.name)) + (p.aff ? ' · ' + BQ.esc(p.aff) : '') +
         (BQ.config.trackPayment && p.pay && BQ.payClass(p.pay) !== 'ok' ? ' · <span class="paychip p-' + BQ.payClass(p.pay) + '">' + BQ.esc(p.pay) + '</span>' : '') + '</div>' + vipNote + '</div>' +
         '<div class="ci-table">' + (vipMode ? '<small>VIP TICKETS</small><b>' + t + '</b>' : p.table ? '<small>TABLE</small><b>' + BQ.esc(p.table) + '</b>' : '<small>no table</small>') + '</div>' +
@@ -1150,7 +1162,7 @@ BQ.setupPanel = async function (box, onReady) {
     (r.error ? '<span class="bad">' + BQ.esc(r.error) + '</span>' : !r.exists ? '<span class="bad">Missing list</span>' : r.missing.length ? '<span class="bad">Missing: ' + r.missing.join(', ') + '</span>' : '<span class="ok">✓ Ready</span>') +
     ((r.optMissing || []).length && r.exists ? ' <span class="warn">· Recommended: add ' + r.optMissing.join(', ') + '</span>' : '') +
     '</td></tr>').join('') + '</tbody></table>' +
-    (ok && optMissing ? '<p class="warn">Recommended: add the column(s) above (<b>Badge</b> = Single line of text, <b>NotAttending</b> = Yes/No). Everything works without them; until then the app keeps that information inside the name.</p>' + BQ.manualSpec(rep) : '') +
+    (ok && optMissing ? '<p class="warn">Recommended: add the column(s) above (<b>Badge</b> = Single line of text, <b>NotAttending</b> and <b>NoResponse</b> = Yes/No). Everything works without them; until then the app keeps that information inside the name.</p>' + BQ.manualSpec(rep) : '') +
     (ok ? '<p class="ok">✓ Everything is set up.</p>' + (onReady ? '<button class="btn primary" id="spGo">Continue</button>' : '') :
       '<p>The app can create the missing lists and columns for you. You need to be an owner of the SharePoint site.</p><button class="btn primary" id="spFix">Create missing lists &amp; columns</button><div id="spProg" class="muted small"></div>');
   const fix = box.querySelector('#spFix');
@@ -1312,7 +1324,7 @@ BQ.start = async function (mode) {
   try { id = Number(localStorage.getItem('bq_event')); } catch (e) { /* ignore */ }
   if (!st.events.some(e => e.id === id)) id = st.events.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)))[0].id;
   await BQ.openEvent(id);
-  const missingOpt = ['Badge', 'NotAttending'].filter(c => !BQ.fieldOk('Banquet_Parties', c));
+  const missingOpt = ['Badge', 'NotAttending', 'NoResponse'].filter(c => !BQ.fieldOk('Banquet_Parties', c));
   if (st.store.kind === 'sharepoint' && missingOpt.length && !document.body.classList.contains('kiosk'))
     setTimeout(() => BQ.ui.toast('Tip: add ' + missingOpt.map(c => '“' + c + '” (' + (c === 'Badge' ? 'Single line of text' : 'Yes/No') + ')').join(' and ') + ' to the Banquet_Parties list. See Settings → SharePoint setup.'), 2500);
 };

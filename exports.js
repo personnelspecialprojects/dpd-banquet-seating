@@ -469,25 +469,30 @@ X.ticketRows = function (who) {
     .map(p => {
       const org = BQ.isOrg(p);
       const n = org ? null : BQ.splitName(p.name);
-      return { key: BQ.sortKey(p.name, org), name: org ? p.name : n.last + (n.first ? ', ' + n.first : ''), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || ''), na: !!p.notAttending };
+      return { key: BQ.sortKey(p.name, org), name: org ? p.name : n.last + (n.first ? ', ' + n.first : ''), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || ''), na: !!p.notAttending, nr: !!p.noResponse && !p.notAttending };
     })
     .sort((a, b) => a.key.localeCompare(b.key));
 };
 // optional: everyone marked "Not attending" goes to the bottom under its own heading
-X.ticketGroups = (rows, naLast) => naLast ? [{ rows: rows.filter(x => !x.na) }, { label: 'NOT ATTENDING', rows: rows.filter(x => x.na) }].filter(g => g.rows.length) : [{ rows }];
+X.ticketGroups = (rows, naLast, nrLast) => [
+  { rows: rows.filter(x => !(naLast && x.na) && !(nrLast && x.nr)) },
+  { label: 'NO RESPONSE', rows: nrLast ? rows.filter(x => x.nr) : [] },
+  { label: 'NOT ATTENDING', rows: naLast ? rows.filter(x => x.na) : [] }
+].filter(g => g.rows.length);
 X.ticketDialog = function (format) {
   const m = BQ.ui.modal({
     title: 'Ticket pick-up sheet', wide: false,
     body: '<p class="muted small">One line per guest record, A–Z. <b>Name</b> and <b>Badge / Emp #</b> are filled in from the app. <b>Date</b>, <b>Picked up by</b> and <b>Signature</b> are left blank to fill in by hand.</p>' +
       '<div class="field"><label>Who should be on the sheet?</label>' + X.TICKET_WHO.map((w, i) => '<label class="tkopt"><input type="radio" name="tkWho" value="' + w[0] + '"' + (i === 0 ? ' checked' : '') + '/> ' + w[1] + ' <span class="muted small">(' + X.ticketRows(w[0]).length + ')</span></label>').join('') + '</div>' +
-      '<div class="field"><label class="tkopt"><input type="checkbox" id="tkNA" checked/> Put people who are <b>not attending</b> at the bottom, under a “Not attending” heading <span class="muted small">(' + X.ticketRows('all').filter(x => x.na).length + ' now)</span></label></div>',
+      '<div class="field"><label class="tkopt"><input type="checkbox" id="tkNA" checked/> Put people who are <b>not attending</b> at the bottom, under a “Not attending” heading <span class="muted small">(' + X.ticketRows('all').filter(x => x.na).length + ' now)</span></label>' +
+      '<label class="tkopt"><input type="checkbox" id="tkNR"/> Put people with <b>no response</b> near the bottom, under a “No response” heading <span class="muted small">(' + X.ticketRows('all').filter(x => x.nr).length + ' now)</span></label></div>',
     buttons: [{ label: 'Cancel' }, {
       label: format === 'xlsx' ? 'Download Excel' : 'Print', cls: 'primary', onClick: async mm => {
         const who = mm.el.querySelector('[name=tkWho]:checked').value;
         const rows = X.ticketRows(who);
         if (!rows.length) { BQ.ui.toast('Nobody matches that choice.'); return false; }
         const label = (X.TICKET_WHO.find(w => w[0] === who) || [])[1];
-        const groups = X.ticketGroups(rows, mm.el.querySelector('#tkNA').checked);
+        const groups = X.ticketGroups(rows, mm.el.querySelector('#tkNA').checked, mm.el.querySelector('#tkNR').checked);
         if (format === 'xlsx') await X.ticketXlsx(groups, who === 'all' ? '' : label); else X.printTickets(groups, who === 'all' ? '' : label);
       }
     }]
@@ -544,11 +549,11 @@ X.backupXlsx = async function () {
   const wb = X.newBook();
   const g = wb.addWorksheet('Guests', { views: [{ state: 'frozen', ySplit: 1 }] });
   const PAY = BQ.config.trackPayment;
-  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception', 'Badge', 'Not Attending']);
+  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception', 'Badge', 'Not Attending', 'No Response']);
   g.columns = cols.map(c => ({ width: { Name: 28, 'Guest Names': 40, Requests: 40, Notes: 30, Email: 26, 'Payment Note': 22, 'Unit / Org': 22 }[c] || 12 }));
   X.header(g, 1, cols, { size: 11 });
   BQ.state.parties.slice().sort((a, b) => BQ.numSort(a.table || 'zz', b.table || 'zz') || a.name.localeCompare(b.name)).forEach((p, i) => {
-    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '', p.badge || '', p.notAttending ? 'Yes' : '']);
+    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '', p.badge || '', p.notAttending ? 'Yes' : '', p.noResponse && !p.notAttending ? 'Yes' : '']);
   });
   g.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   const t = wb.addWorksheet('Tables');

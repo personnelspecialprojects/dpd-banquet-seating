@@ -132,7 +132,7 @@ BQ.screens.awards = {
           const recs = (a.recipients || []).map(r => {
             const s = BQ.recipientSeat(r);
             return '<span class="rec r-' + s.state + '" title="' + BQ.esc(s.state === 'na' ? 'Not attending' : s.party ? 'Seated with: ' + s.party.name : 'Not matched to anyone on the guest list') + '">' + BQ.esc(BQ.recipLabel(r)) +
-              (r.count > 1 ? ' ×' + r.count : '') + ' <b>' + BQ.esc(s.state === 'na' ? '🚫 not attending' : s.table ? 'T' + s.table : s.state === 'wait' ? 'no table' : '⚠') + '</b></span>';
+              (r.count > 1 ? ' ×' + r.count : '') + (s.state !== 'na' && BQ.recipNR(r) ? ' <span class="nrchip" title="No response yet">❔</span>' : '') + ' <b>' + BQ.esc(s.state === 'na' ? '🚫 not attending' : s.table ? 'T' + s.table : s.state === 'wait' ? 'no table' : '⚠') + '</b></span>';
           }).join('');
           const st = a.status || '';
           return '<div class="award st-' + (st || 'none').replace(/\s/g, '') + (BQ.awardView.sel.has(a.id) ? ' picked' : '') + '" data-aid="' + a.id + '"><input type="checkbox" class="a-sel" data-sel title="Tick to move several awards at once"' + (BQ.awardView.sel.has(a.id) ? ' checked' : '') + '/><div class="a-num">' + num + '</div><div class="a-main">' +
@@ -275,7 +275,7 @@ BQ.addRecipientsAsGuests = async function (people, o) {
     const c = BQ.cleanPerson(p.r.name);
     return {
       kind: 'party', before: null, after: {
-        name: c.name || p.r.name, badge: p.r.badge || c.badge || '', type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
+        name: c.name || p.r.name, badge: p.r.badge || c.badge || '', noResponse: !!p.r.nr || !!c.nr, type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
         notes: 'Award recipient: ' + p.awards.map(BQ.awardTitle).join(', ') + (p.r.rank ? ' · ' + p.r.rank : ''),
         checkedIn: 0, pinned: false, group: '', vip: false, vipCount: 0, vipIn: 0
       }, _p: p
@@ -340,14 +340,14 @@ BQ.awardDialog = function (a) {
         '<input class="unit" data-un="' + i + '" value="' + BQ.esc(r.unit || '') + '" placeholder="Unit"/>' +
         '<input type="number" min="1" class="cnt" data-c="' + i + '" value="' + (r.count || 1) + '" title="How many people walk up for this name"/>' +
         '<span class="rs r-' + s.state + '">' + BQ.esc(s.party ? s.text + ' · with ' + s.party.name : s.text) + '</span>' +
-        (!s.party ? '<select class="sm" data-link="' + i + '">' + partyOpts + '</select><label class="chk small" title="Not on the guest list and not coming"><input type="checkbox" data-na="' + i + '"' + (r.na ? ' checked' : '') + '/> 🚫 not attending</label>' : '<button class="linkbtn" data-unlink="' + i + '">unlink</button>') +
+        (!s.party ? '<select class="sm" data-link="' + i + '">' + partyOpts + '</select><label class="chk small" title="Not on the guest list and not coming"><input type="checkbox" data-na="' + i + '"' + (r.na ? ' checked' : '') + '/> 🚫 not attending</label><label class="chk small" title="Hasn’t answered yet"><input type="checkbox" data-nr="' + i + '"' + (r.nr && !r.na ? ' checked' : '') + '/> ❔ no response</label>' : '<button class="linkbtn" data-unlink="' + i + '">unlink</button>') +
         '<button class="x" data-rm="' + i + '">✕</button></div>';
     }).join('') || '<div class="muted small">No recipients yet.</div>';
     const R = $('#adRecs');
     R.querySelectorAll('[data-i]').forEach(inp => inp.onchange = () => {
       const r = d.recipients[Number(inp.dataset.i)];
       const c = BQ.cleanPerson(inp.value);
-      r.name = c.name; if (c.badge && !r.badge) r.badge = c.badge; if (c.na) r.na = true; r.pid = null; draw();
+      r.name = c.name; if (c.badge && !r.badge) r.badge = c.badge; if (c.na) r.na = true; else if (c.nr) r.nr = true; r.pid = null; draw();
     });
     R.querySelectorAll('[data-rk]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.rk)].rank = inp.value.trim(); });
     R.querySelectorAll('[data-bd]').forEach(inp => inp.onchange = () => { const r = d.recipients[Number(inp.dataset.bd)]; r.badge = inp.value.replace(/[^0-9A-Za-z]/g, ''); if (r.pid !== -1 && !BQ.partyById(r.pid)) { r.pid = null; draw(); } });
@@ -355,7 +355,8 @@ BQ.awardDialog = function (a) {
     R.querySelectorAll('[data-c]').forEach(inp => inp.onchange = () => { d.recipients[Number(inp.dataset.c)].count = Math.max(1, parseInt(inp.value, 10) || 1); });
     R.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { d.recipients.splice(Number(b.dataset.rm), 1); draw(); });
     R.querySelectorAll('[data-link]').forEach(sel => sel.onchange = () => { d.recipients[Number(sel.dataset.link)].pid = Number(sel.value) || null; draw(); });
-    R.querySelectorAll('[data-na]').forEach(c => c.onchange = () => { d.recipients[Number(c.dataset.na)].na = c.checked; draw(); });
+    R.querySelectorAll('[data-na]').forEach(c => c.onchange = () => { const r = d.recipients[Number(c.dataset.na)]; r.na = c.checked; if (c.checked) r.nr = false; draw(); });
+    R.querySelectorAll('[data-nr]').forEach(c => c.onchange = () => { const r = d.recipients[Number(c.dataset.nr)]; r.nr = c.checked; if (c.checked) r.na = false; draw(); });
     R.querySelectorAll('[data-unlink]').forEach(b => b.onclick = () => { d.recipients[Number(b.dataset.unlink)].pid = -1; draw(); });
   };
   draw();
