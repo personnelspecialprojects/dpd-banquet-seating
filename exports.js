@@ -106,7 +106,7 @@ X.classicBlock = function (t) {
   } else {
     ps.forEach((p, i) => {
       rows.push({
-        a: i === 0 ? X.tableLabel(t.n) : '', b: p.name, c: p.seats, d: i === 0 ? status : '',
+        a: i === 0 ? X.tableLabel(t.n) : '', b: BQ.displayName(p), c: p.seats, d: i === 0 ? status : '',
         fillA: i === 0 ? statusFill : X.CLASSIC.GRAY, fillD: i === 0 ? statusFill : X.CLASSIC.GRAY,
         fillB: BQ.isOrg(p) && p.type !== 'Hold' ? X.CLASSIC.UNITS : (p.type === 'Hold' ? X.CLASSIC.HOLD : null),
         boldD: i === 0 && st === 'open', whiteD: i === 0 && st === 'open'
@@ -203,12 +203,16 @@ X.classicXlsx = async function () {
 X.alphaRows = function () {
   const rows = BQ.people().filter(x => !x.party.notAttending).map(x => {
     const p = x.party;
-    const n = x.org ? { first: '', last: x.name } : BQ.splitName(x.name);
+    const org = x.org || (x.leader && BQ.orgOnly(p));   // a company with no person name lists as the company
+    const n = org ? { first: '', last: x.name } : BQ.splitName(x.name);
+    const company = org || !p.company ? '' : p.company;
+    const rank = x.leader && !org ? BQ.rankShort(p.rank) : '';
     let party = '';
     if (x.org) party = BQ.typeInfo(p.type).label + ' (' + p.seats + ' seats)';
     else if (x.leader) party = p.seats > 1 ? 'Party of ' + p.seats : '';
-    else party = 'Guest of ' + p.name;
-    return { key: BQ.sortKey(x.name, x.org), first: n.first, last: n.last, badge: x.org ? '' : x.leader ? (p.badge || BQ.cleanPerson(x.name).badge) : BQ.cleanPerson(x.name).badge, name: x.name, table: p.table || '', party, seats: x.leader ? p.seats : '', p, leader: x.leader, org: x.org };
+    else party = 'Guest of ' + BQ.displayName(p);
+    if (company) party = company + (party ? ' · ' + party : '');
+    return { key: BQ.sortKey(x.name, org), first: n.first, last: n.last, rank, company, badge: org ? '' : x.leader ? (p.badge || BQ.cleanPerson(x.name).badge) : BQ.cleanPerson(x.name).badge, name: x.name, table: p.table || '', party, seats: x.leader ? p.seats : '', p, leader: x.leader, org };
   });
   // reserved blocks (e.g. FDP Sponsors) get one line listing their tables
   BQ.reservations().forEach(b => rows.push({ key: BQ.sortKey(b.label, true), first: '', last: b.label, name: b.label, table: b.tables.join(', '),
@@ -216,33 +220,35 @@ X.alphaRows = function () {
   rows.sort((a, b) => a.key.localeCompare(b.key));
   return rows;
 };
+// "Sgt. Nielsen, Jared (Quik Trip)" — or just the name for units, organizations and reserved blocks
+X.lf = x => x.org ? x.name : (x.rank ? x.rank + ' ' : '') + x.last + (x.first ? ', ' + x.first : '') + (x.company ? ' (' + x.company + ')' : '');
 
 X.alphaXlsx = async function () {
   if (!X.needExcel()) return;
   const wb = X.newBook();
   const ws = wb.addWorksheet('Alphabetical', { views: [{ state: 'frozen', ySplit: 3 }] });
-  ws.columns = [{ width: 24 }, { width: 22 }, { width: 10 }, { width: 10 }, { width: 38 }, { width: 10 }, { width: 10 }];
-  X.title(ws, BQ.state.event.title + ' — Alphabetical List', 'Printed ' + new Date().toLocaleString(), 7);
-  X.header(ws, 3, ['Last Name', 'First Name', 'Badge', 'Table', 'Party / Group', 'Seats', 'VIP tickets']);
+  ws.columns = [{ width: 10 }, { width: 24 }, { width: 22 }, { width: 10 }, { width: 10 }, { width: 40 }, { width: 10 }, { width: 10 }];
+  X.title(ws, BQ.state.event.title + ' — Alphabetical List', 'Printed ' + new Date().toLocaleString(), 8);
+  X.header(ws, 3, ['Rank', 'Last Name', 'First Name', 'Badge', 'Table', 'Party / Group', 'Seats', 'VIP tickets']);
   let r = 4, letter = '';
   X.alphaRows().forEach(x => {
     const L = (x.key[0] || '#').toUpperCase();
     if (L !== letter) {
       letter = L;
-      ws.mergeCells(r, 1, r, 7);
+      ws.mergeCells(r, 1, r, 8);
       const c = ws.getCell(r, 1);
       c.value = L; c.font = { bold: true, size: 13, color: { argb: 'FF1F3A5F' } }; c.fill = X.fill('FFDCE6F2');
       r++;
     }
     const row = ws.getRow(r);
-    row.values = [x.last, x.first, x.badge || '', x.table || 'Not seated', x.party, x.seats, x.p.vip && (x.leader || x.block) ? BQ.vipCount(x.p) : (x.p.vip ? '★' : '')];
-    row.getCell(7).alignment = { horizontal: 'center' };
+    row.values = [x.rank || '', x.last, x.first, x.badge || '', x.table || 'Not seated', x.party, x.seats, x.p.vip && (x.leader || x.block) ? BQ.vipCount(x.p) : (x.p.vip ? '★' : '')];
+    row.getCell(8).alignment = { horizontal: 'center' };
     row.font = { size: 12 };
-    row.getCell(3).alignment = { horizontal: 'center' };
-    row.getCell(4).font = { size: 14, bold: true, color: { argb: x.table ? 'FF000000' : 'FFC00000' } };
     row.getCell(4).alignment = { horizontal: 'center' };
-    row.getCell(6).alignment = { horizontal: 'center' };
-    [1, 2, 3, 4, 5, 6, 7].forEach(i => { row.getCell(i).border = { bottom: { style: 'hair', color: { argb: 'FFBBBBBB' } } }; });
+    row.getCell(5).font = { size: 14, bold: true, color: { argb: x.table ? 'FF000000' : 'FFC00000' } };
+    row.getCell(5).alignment = { horizontal: 'center' };
+    row.getCell(7).alignment = { horizontal: 'center' };
+    [1, 2, 3, 4, 5, 6, 7, 8].forEach(i => { row.getCell(i).border = { bottom: { style: 'hair', color: { argb: 'FFBBBBBB' } } }; });
     r++;
   });
   X.printSetup(ws, 'portrait', '3:3');
@@ -276,7 +282,7 @@ X.rostersXlsx = async function () {
       r++;
       u.parties.forEach(p => {
         const row = ws.getRow(r);
-        row.values = [p.name, p.seats, p.aff, (p.guests || []).join(', '), [X.needsText(p), p.notes].filter(Boolean).join(' | ')];
+        row.values = [BQ.displayName(p), p.seats, p.aff, (p.guests || []).join(', '), [X.needsText(p), p.notes].filter(Boolean).join(' | ')];
         row.alignment = { wrapText: true, vertical: 'top' };
         row.getCell(2).alignment = { horizontal: 'center', vertical: 'top' };
         r++;
@@ -311,7 +317,7 @@ X.checkinXlsx = async function () {
   let r = 4;
   X.alphaRows().forEach(x => {
     const row = ws.getRow(r);
-    const vals = ['☐', x.org ? x.name : (x.last + (x.first ? ', ' + x.first : '')), x.table || '—', x.party, x.seats];
+    const vals = ['☐', X.lf(x), x.table || '—', x.party, x.seats];
     if (P) vals.push(x.leader ? (x.p.pay || '') : '');
     vals.push(x.p.vip ? (x.leader ? BQ.vipCount(x.p) : '★') : '');
     row.values = vals;
@@ -427,7 +433,7 @@ X.awardFileXlsx = async function () {
 };
 
 /* VIP reception list */
-X.vipRows = () => BQ.state.parties.filter(p => p.vip && !p.notAttending).map(p => ({ p, key: BQ.sortKey(p.name, BQ.isOrg(p)), n: BQ.vipCount(p) })).sort((a, b) => a.key.localeCompare(b.key));
+X.vipRows = () => BQ.state.parties.filter(p => p.vip && !p.notAttending).map(p => ({ p, key: BQ.partySortKey(p), n: BQ.vipCount(p) })).sort((a, b) => a.key.localeCompare(b.key));
 X.vipXlsx = async function () {
   if (!X.needExcel()) return;
   const rows = X.vipRows();
@@ -439,7 +445,7 @@ X.vipXlsx = async function () {
   X.header(ws, 3, ['Here', 'Name', 'VIP tickets', 'Seats', 'Guest names', 'Unit / org', 'Table']);
   rows.forEach((x, i) => {
     const row = ws.getRow(i + 4);
-    const nm = BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name));
+    const nm = BQ.displayName(x.p, true);
     row.values = ['☐', nm, x.n, x.p.seats, (x.p.guests || []).join(', '), x.p.aff, x.p.table || ''];
     row.font = { size: 13 };
     row.getCell(1).alignment = { horizontal: 'center' }; row.getCell(3).alignment = { horizontal: 'center' }; row.getCell(6).alignment = { horizontal: 'center' };
@@ -453,7 +459,7 @@ X.printVip = function () {
   const rows = X.vipRows();
   if (!rows.length) { BQ.ui.toast('Nobody is marked for the VIP reception yet.'); return; }
   X.print('<div class="pci">' + X.printHead('VIP Reception', rows.reduce((s, x) => s + x.n, 0) + ' people') + '<table><thead><tr><th>✓</th><th>Name</th><th>VIP tickets</th><th>Seats</th><th>Guests</th><th>Table</th></tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name))) + '</td><td class="t">' + x.n + '</td><td class="c">' + x.p.seats + '</td><td>' + BQ.esc((x.p.guests || []).join(', ')) + '</td><td>' + BQ.esc(x.p.table || '') + '</td></tr>').join('') +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.displayName(x.p, true)) + '</td><td>' + BQ.esc(BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name))) + '</td><td class="t">' + x.n + '</td><td class="c">' + x.p.seats + '</td><td>' + BQ.esc((x.p.guests || []).join(', ')) + '</td><td>' + BQ.esc(x.p.table || '') + '</td></tr>').join('') +
     '</tbody></table></div>', 'portrait', 'VIP reception list');
 };
 
@@ -467,77 +473,97 @@ X.ticketRows = function (who) {
   return BQ.state.parties.filter(p => p.type !== 'Hold' && (
     who === 'people' ? !BQ.isOrg(p) : who === 'awards' ? recips.has(p.id) : who === 'vip' ? !!p.vip : true))
     .map(p => {
-      const org = BQ.isOrg(p);
-      const n = org ? null : BQ.splitName(p.name);
-      return { key: BQ.sortKey(p.name, org), name: org ? p.name : n.last + (n.first ? ', ' + n.first : ''), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || ''), na: !!p.notAttending, nr: !!p.noResponse && !p.notAttending };
+      const org = BQ.nameIsOrg(p);
+      return { key: BQ.partySortKey(p), name: BQ.displayName(p, true), badge: org ? '' : (p.badge || BQ.cleanPerson(p.name).badge || ''),
+        tickets: p.notAttending ? 0 : Number(p.seats) || 0, vip: p.notAttending ? 0 : BQ.vipCount(p), table: p.notAttending ? '' : (p.table || ''),   // not coming: no tickets to hand out
+        na: !!p.notAttending, nr: !!p.noResponse && !p.notAttending, pk: p.pickup || null };
     })
     .sort((a, b) => a.key.localeCompare(b.key));
 };
-// optional: everyone marked "Not attending" goes to the bottom under its own heading
-X.ticketGroups = (rows, naLast, nrLast) => [
-  { rows: rows.filter(x => !(naLast && x.na) && !(nrLast && x.nr)) },
-  { label: 'NO RESPONSE', rows: nrLast ? rows.filter(x => x.nr) : [] },
-  { label: 'NOT ATTENDING', rows: naLast ? rows.filter(x => x.na) : [] }
-].filter(g => g.rows.length);
+// sections: everyone else A–Z, then (optionally) No response, Not attending, and already picked up at the very end
+X.ticketGroups = (rows, o) => {
+  const pkOut = o.picked === 'end' || o.picked === 'skip';
+  if (o.picked === 'skip') rows = rows.filter(x => !x.pk);
+  const isPk = x => pkOut && x.pk, isNa = x => o.na && x.na && !isPk(x), isNr = x => o.nr && x.nr && !isPk(x);
+  return [
+    { rows: rows.filter(x => !isPk(x) && !isNa(x) && !isNr(x)) },
+    { label: 'NO RESPONSE', rows: rows.filter(isNr) },
+    { label: 'NOT ATTENDING', rows: rows.filter(isNa) },
+    { label: 'TICKETS ALREADY PICKED UP', rows: o.picked === 'end' ? rows.filter(isPk) : [] }
+  ].filter(g => g.rows.length);
+};
 X.ticketDialog = function (format) {
+  const all = X.ticketRows('all');
+  const opt = (type, name, value, checked, html) => '<label class="tkopt"><input type="' + type + '" name="' + name + '" value="' + value + '"' + (checked ? ' checked' : '') + '/><span>' + html + '</span></label>';
+  const cnt = n => ' <span class="muted small">(' + n + ')</span>';
   const m = BQ.ui.modal({
     title: 'Ticket pick-up sheet', wide: false,
-    body: '<p class="muted small">One line per guest record, A–Z. <b>Name</b> and <b>Badge / Emp #</b> are filled in from the app. <b>Date</b>, <b>Picked up by</b> and <b>Signature</b> are left blank to fill in by hand.</p>' +
-      '<div class="field"><label>Who should be on the sheet?</label>' + X.TICKET_WHO.map((w, i) => '<label class="tkopt"><input type="radio" name="tkWho" value="' + w[0] + '"' + (i === 0 ? ' checked' : '') + '/> ' + w[1] + ' <span class="muted small">(' + X.ticketRows(w[0]).length + ')</span></label>').join('') + '</div>' +
-      '<div class="field"><label class="tkopt"><input type="checkbox" id="tkNA" checked/> Put people who are <b>not attending</b> at the bottom, under a “Not attending” heading <span class="muted small">(' + X.ticketRows('all').filter(x => x.na).length + ' now)</span></label>' +
-      '<label class="tkopt"><input type="checkbox" id="tkNR"/> Put people with <b>no response</b> near the bottom, under a “No response” heading <span class="muted small">(' + X.ticketRows('all').filter(x => x.nr).length + ' now)</span></label></div>',
+    body: '<p class="muted small">One line per guest record, A–Z. <b>Name</b>, <b>Badge / Emp #</b>, <b>Tickets</b> (= seats), <b>VIP tickets</b> and <b>Table</b> come from the app. <b>Date</b>, <b>Picked up by</b> and <b>Signature</b> are left blank to fill in by hand (they’re filled in for tickets already marked picked up in the app).</p>' +
+      '<div class="field"><label>Who should be on the sheet?</label>' + X.TICKET_WHO.map((w, i) => opt('radio', 'tkWho', w[0], i === 0, BQ.esc(w[1]) + cnt(X.ticketRows(w[0]).length))).join('') + '</div>' +
+      '<div class="field"><label>Tickets already picked up' + cnt(all.filter(x => x.pk).length) + '</label>' +
+        opt('radio', 'tkPk', 'end', true, 'Put them at the very end') + opt('radio', 'tkPk', 'skip', false, 'Leave them off the sheet') + opt('radio', 'tkPk', 'mix', false, 'Keep them in A–Z order') + '</div>' +
+      '<div class="field"><label>Move to the bottom</label>' +
+        opt('checkbox', 'tkNA', '1', true, '🚫 Not attending, under their own heading' + cnt(all.filter(x => x.na).length)) +
+        opt('checkbox', 'tkNR', '1', false, '❔ No response, under their own heading' + cnt(all.filter(x => x.nr).length)) + '</div>',
     buttons: [{ label: 'Cancel' }, {
       label: format === 'xlsx' ? 'Download Excel' : 'Print', cls: 'primary', onClick: async mm => {
         const who = mm.el.querySelector('[name=tkWho]:checked').value;
-        const rows = X.ticketRows(who);
-        if (!rows.length) { BQ.ui.toast('Nobody matches that choice.'); return false; }
-        const label = (X.TICKET_WHO.find(w => w[0] === who) || [])[1];
-        const groups = X.ticketGroups(rows, mm.el.querySelector('#tkNA').checked, mm.el.querySelector('#tkNR').checked);
-        if (format === 'xlsx') await X.ticketXlsx(groups, who === 'all' ? '' : label); else X.printTickets(groups, who === 'all' ? '' : label);
+        const o = { picked: mm.el.querySelector('[name=tkPk]:checked').value, na: mm.el.querySelector('[name=tkNA]').checked, nr: mm.el.querySelector('[name=tkNR]').checked };
+        const groups = X.ticketGroups(X.ticketRows(who), o);
+        if (!groups.length) { BQ.ui.toast('Nobody matches that choice.'); return false; }
+        const label = who === 'all' ? '' : (X.TICKET_WHO.find(w => w[0] === who) || [])[1];
+        if (format === 'xlsx') await X.ticketXlsx(groups, label); else X.printTickets(groups, label);
       }
     }]
   });
   return m;
 };
-X.TICKET_COLS = ['Date', 'Name', 'Badge / Emp #', 'Picked up by (name & badge / emp #)', 'Signature'];
-X.ticketXlsx = async function (groups, sub) {
+X.TICKET_COLS = ['Date', 'Name', 'Badge / Emp #', 'Tickets', 'VIP tickets', 'Table', 'Picked up by (name & badge / emp #)', 'Signature'];
+X.ticketCells = x => [x.pk ? BQ.fmtDate(x.pk.at) : '', x.name, x.badge, x.tickets || '', x.vip || '', x.table, x.pk ? (x.pk.by || 'Self') : '', ''];
+X.ticketSub = (groups, sub) => {
   const rows = [].concat.apply([], groups.map(g => g.rows));
+  return (sub ? sub + ' · ' : '') + rows.length + ' names · ' + rows.reduce((s, x) => s + x.tickets, 0) + ' tickets · ' + rows.reduce((s, x) => s + x.vip, 0) + ' VIP tickets';
+};
+X.ticketXlsx = async function (groups, sub) {
   if (!X.needExcel()) return;
   const wb = X.newBook();
   const ws = wb.addWorksheet('Ticket Pick-Up', { views: [{ state: 'frozen', ySplit: 3 }] });
-  ws.columns = [{ width: 12 }, { width: 30 }, { width: 15 }, { width: 40 }, { width: 34 }];
-  X.title(ws, BQ.state.event.title + ' — Ticket Pick-Up', (sub ? sub + ' · ' : '') + rows.length + ' names · sign when tickets are picked up', 5);
+  ws.columns = [{ width: 11 }, { width: 27 }, { width: 11 }, { width: 8 }, { width: 8 }, { width: 7 }, { width: 34 }, { width: 28 }];
+  X.title(ws, BQ.state.event.title + ' — Ticket Pick-Up', X.ticketSub(groups, sub), 8);
   X.header(ws, 3, X.TICKET_COLS);
+  ws.getRow(3).alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' };
   const line = { style: 'thin', color: { argb: 'FF999999' } };
   let r = 4;
   groups.forEach(g => {
     if (g.label) {
       r++;   // a blank line, then the heading
-      ws.mergeCells(r, 1, r, 5);
+      ws.mergeCells(r, 1, r, 8);
       const h = ws.getCell(r, 1);
       h.value = g.label + ' (' + g.rows.length + ')';
-      h.font = { bold: true, size: 13, color: { argb: 'FF8B1A1A' } }; h.fill = X.fill('FFF6E3E3');
+      const pk = g.label.indexOf('PICKED') >= 0;
+      h.font = { bold: true, size: 13, color: { argb: pk ? 'FF1E5E2A' : 'FF8B1A1A' } }; h.fill = X.fill(pk ? 'FFE3F2E5' : 'FFF6E3E3');
       ws.getRow(r).height = 22;
       r++;
     }
-    g.rows.forEach(x => { fill(ws.getRow(r), x); r++; });
+    g.rows.forEach(x => {
+      const row = ws.getRow(r++);
+      row.values = X.ticketCells(x);
+      row.height = 30;
+      row.font = { size: 12 };
+      for (let c = 1; c <= 8; c++) { const cell = row.getCell(c); cell.border = { top: line, bottom: line, left: line, right: line }; cell.alignment = { vertical: 'middle', horizontal: c >= 3 && c <= 6 ? 'center' : 'left' }; }
+      row.getCell(3).numFmt = '@'; row.getCell(6).numFmt = '@';
+      row.getCell(6).font = { size: 13, bold: true };
+      if (x.pk) { row.getCell(1).font = { size: 11, color: { argb: 'FF1E5E2A' } }; row.getCell(7).font = { size: 11, color: { argb: 'FF1E5E2A' } }; }
+    });
   });
-  function fill(row, x) {
-    row.values = ['', x.name, x.badge, '', ''];
-    row.height = 30;
-    row.font = { size: 12 };
-    for (let c = 1; c <= 5; c++) { const cell = row.getCell(c); cell.border = { top: line, bottom: line, left: line, right: line }; cell.alignment = { vertical: 'middle', horizontal: c === 3 ? 'center' : 'left' }; }
-    row.getCell(3).numFmt = '@';
-  }
   X.printSetup(ws, 'landscape', '3:3');
   await X.save(wb, 'Ticket pick-up sheet');
 };
 X.printTickets = function (groups, sub) {
-  const n = groups.reduce((s, g) => s + g.rows.length, 0);
-  X.print('<div class="ptix">' + X.printHead('Ticket Pick-Up', (sub ? sub + ' · ' : '') + n + ' names') +
+  X.print('<div class="ptix">' + X.printHead('Ticket Pick-Up', X.ticketSub(groups, sub)) +
     '<table><thead><tr>' + X.TICKET_COLS.map((c, i) => '<th class="c' + i + '">' + BQ.esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
-    groups.map(g => (g.label ? '<tr class="grp"><td colspan="5">' + BQ.esc(g.label) + ' (' + g.rows.length + ')</td></tr>' : '') +
-      g.rows.map(x => '<tr><td></td><td>' + BQ.esc(x.name) + '</td><td class="c">' + BQ.esc(x.badge) + '</td><td></td><td></td></tr>').join('')).join('') +
+    groups.map(g => (g.label ? '<tr class="grp' + (g.label.indexOf('PICKED') >= 0 ? ' pk' : '') + '"><td colspan="8">' + BQ.esc(g.label) + ' (' + g.rows.length + ')</td></tr>' : '') +
+      g.rows.map(x => { const v = X.ticketCells(x); return '<tr' + (x.pk ? ' class="done"' : '') + '>' + v.map((c, i) => '<td class="c' + i + '">' + BQ.esc(c) + '</td>').join('') + '</tr>'; }).join('')).join('') +
     '</tbody></table></div>', 'landscape', 'ticket pick-up sheet');
 };
 
@@ -549,11 +575,11 @@ X.backupXlsx = async function () {
   const wb = X.newBook();
   const g = wb.addWorksheet('Guests', { views: [{ state: 'frozen', ySplit: 1 }] });
   const PAY = BQ.config.trackPayment;
-  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception', 'Badge', 'Not Attending', 'No Response']);
+  const cols = ['Name', 'Type', 'Unit / Org', 'Seats', 'Table', 'Guest Names', 'Requests'].concat(PAY ? ['Payment', 'Payment Note'] : []).concat(['Phone', 'Email', 'Notes', 'Checked In', 'Pinned', 'Split Group', 'VIP Reception', 'Badge', 'Not Attending', 'No Response', 'Rank', 'Organization', 'Tickets Picked Up']);
   g.columns = cols.map(c => ({ width: { Name: 28, 'Guest Names': 40, Requests: 40, Notes: 30, Email: 26, 'Payment Note': 22, 'Unit / Org': 22 }[c] || 12 }));
   X.header(g, 1, cols, { size: 11 });
   BQ.state.parties.slice().sort((a, b) => BQ.numSort(a.table || 'zz', b.table || 'zz') || a.name.localeCompare(b.name)).forEach((p, i) => {
-    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '', p.badge || '', p.notAttending ? 'Yes' : '', p.noResponse && !p.notAttending ? 'Yes' : '']);
+    g.getRow(i + 2).values = [p.name, p.type, p.aff, p.seats, p.table, (p.guests || []).join('; '), X.needsText(p)].concat(PAY ? [p.pay, p.payNote] : []).concat([p.phone, p.email, p.notes, p.checkedIn || 0, p.pinned ? 'Yes' : '', p.group, p.vip ? BQ.vipCount(p) : '', p.badge || '', p.notAttending ? 'Yes' : '', p.noResponse && !p.notAttending ? 'Yes' : '', p.rank || '', p.company || '', BQ.pickupText(p)]);
   });
   g.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   const t = wb.addWorksheet('Tables');
@@ -611,8 +637,7 @@ X.staticMapSvg = function (opts) {
 
 X.printMap = function () {
   const s = BQ.stats();
-  const legend = '<div class="plegend"><span><i style="border-color:#2E7D32"></i>Full</span><span><i style="border-color:#C62828"></i>Open seats</span><span><i style="border-color:#9AA5B4"></i>Empty</span><span><i style="border-color:#E08600"></i>On hold</span>' +
-    '<span>Blue chairs = units/orgs · ★ = award recipient · numbers show seated/chairs</span><span>' + s.seated + ' seated · ' + s.open + ' open seats</span></div>';
+  const legend = '<div class="plegend">' + BQ.mapLegendHtml('status', true) + '<span class="lg"><b>' + s.seated + '</b>&nbsp;seated · <b>' + s.open + '</b>&nbsp;open seats</span></div>';
   X.print('<div class="pmap">' + X.printHead('Seating Map') + '<div class="pmap-svg">' + X.staticMapSvg({ look: t => BQ.tableLook(t, { colorBy: 'status', awardTables: BQ.awardTableSet() }) }) + '</div>' + legend + '</div>', 'landscape', 'map');
 };
 
@@ -624,11 +649,18 @@ X.mapPng = function () {
   const img = new Image();
   img.onload = () => {
     const c = document.createElement('canvas');
-    c.width = (L.w + 60) * scale; c.height = (L.h + 60) * scale + 70 * scale;
+    const W = (L.w + 60) * scale, H = (L.h + 60) * scale;
+    // measure the legend first, then size the picture to fit it
+    const probe = document.createElement('canvas').getContext('2d');
+    const legendH = BQ.drawLegendCanvas(probe, 30 * scale, 0, W - 60 * scale, scale);
+    c.width = W; c.height = H + 70 * scale + legendH + 30 * scale;
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#1F3A5F'; ctx.font = 'bold ' + (28 * scale) + 'px Segoe UI, Arial'; ctx.fillText(BQ.state.event.title + ' — Seating Map', 30 * scale, 45 * scale);
-    ctx.drawImage(img, 0, 70 * scale, (L.w + 60) * scale, (L.h + 60) * scale);
+    ctx.drawImage(img, 0, 70 * scale, W, H);
+    ctx.strokeStyle = '#D5DBE5'; ctx.lineWidth = scale; ctx.beginPath(); ctx.moveTo(30 * scale, 70 * scale + H + 6 * scale); ctx.lineTo(W - 30 * scale, 70 * scale + H + 6 * scale); ctx.stroke();
+    BQ.drawLegendCanvas(ctx, 30 * scale, 70 * scale + H + 26 * scale, W - 60 * scale, scale);
     c.toBlob(b => { X.download(b, X.fileBase() + ' - Seating map ' + X.today() + '.png'); BQ.logAction('Exported map picture', ''); }, 'image/png');
   };
   img.onerror = () => BQ.ui.toast('Couldn’t make the picture. Try Print map → Save as PDF instead.', 'bad');
@@ -641,7 +673,7 @@ X.printAlpha = function () {
   rows.forEach(x => {
     const L = (x.key[0] || '#').toUpperCase();
     if (L !== letter) { letter = L; html += '<div class="pa-letter">' + BQ.esc(L) + '</div>'; }
-    html += '<div class="pa-row"><span>' + BQ.esc(x.org ? x.name : x.last + (x.first ? ', ' + x.first : '')) + '</span><b>' + BQ.esc(x.table || '—') + '</b></div>';
+    html += '<div class="pa-row"><span>' + BQ.esc(X.lf(x)) + '</span><b>' + BQ.esc(x.table || '—') + '</b></div>';
   });
   X.print('<div class="palpha">' + X.printHead('Find Your Table', 'A–Z') + '<div class="pa-cols">' + html + '</div></div>', 'portrait', 'A–Z list');
 };
@@ -651,7 +683,7 @@ X.printRosters = function () {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
     return '<div class="pr-card s-' + st + '"><div class="pr-h"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : st === 'reserved' ? 'Reserved' : u.used + '/' + u.cap) + '</span></div>' +
       (t.res || t.note ? '<div class="pr-res">' + BQ.esc(t.res || t.note) + '</div>' : '') +
-      '<ul>' + u.parties.map(p => '<li><span>' + BQ.esc(p.name) + ((p.guests || []).length ? '<small>' + BQ.esc(p.guests.join(', ')) + '</small>' : '') + '</span><b>' + p.seats + '</b></li>').join('') + '</ul></div>';
+      '<ul>' + u.parties.map(p => '<li><span>' + BQ.esc(BQ.displayName(p)) + ((p.guests || []).length ? '<small>' + BQ.esc(p.guests.join(', ')) + '</small>' : '') + '</span><b>' + p.seats + '</b></li>').join('') + '</ul></div>';
   }).join('');
   X.print('<div class="prost">' + X.printHead('Table Rosters') + '<div class="pr-grid">' + cards + '</div></div>', 'portrait', 'rosters');
 };
@@ -659,7 +691,7 @@ X.printRosters = function () {
 X.printCheckin = function () {
   const rows = X.alphaRows();
   X.print('<div class="pci">' + X.printHead('Check-In List') + '<table><thead><tr><th>✓</th><th>Name</th><th>Table</th><th>Party</th><th>Seats</th><th>VIP tickets</th>' + (BQ.config.trackPayment ? '<th>Payment</th>' : '') + '</tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(x.org ? x.name : x.last + (x.first ? ', ' + x.first : '')) + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td><td class="c">' + (x.seats || '') + '</td><td class="c">' + (x.p.vip ? (x.leader ? '⭐ ' + BQ.vipCount(x.p) : '★') : '') + '</td>' +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.displayName(x.p, true)) + '</td><td>' + BQ.esc(X.lf(x)) + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td><td class="c">' + (x.seats || '') + '</td><td class="c">' + (x.p.vip ? (x.leader ? '⭐ ' + BQ.vipCount(x.p) : '★') : '') + '</td>' +
       (BQ.config.trackPayment ? '<td>' + (x.leader && x.p.pay && BQ.payClass(x.p.pay) !== 'ok' ? '<b>' + BQ.esc(x.p.pay) + '</b>' : '') + '</td>' : '') + '</tr>').join('') + '</tbody></table></div>', 'portrait', 'check-in');
 };
 
@@ -724,7 +756,7 @@ BQ.screens.exports = {
       tile('lineup', '🏆', 'Awards lineup', 'Program order with recipient tables and the escort pickup route.') +
       tile('awardfile', '🎖️', 'Award file + tables', 'The awards spreadsheet in its usual layout (Rank, Name, Memo, Log Number), with each person’s table added.') +
       tile('vip', '⭐', 'VIP reception list', 'Everyone invited to the VIP reception, A–Z, with VIP tickets and seats.') +
-      tile('tickets', '🎟️', 'Ticket pick-up sheet', 'A–Z sign-out sheet: Date, Name, Badge / Emp #, Picked up by, Signature.') +
+      tile('tickets', '🎟️', 'Ticket pick-up sheet', 'A–Z sign-out sheet with tickets, VIP tickets and table; lines for date, who picked up, and signature.') +
       tile('backup', '💾', 'Full backup', 'Everything in one file. Can be restored later.') +
       '</div>' +
       '<h2 class="sec">Print or save as PDF</h2><div class="tiles">' +

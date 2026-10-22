@@ -524,10 +524,12 @@ IM.parsePaste = function (text) {
     map = {};
     h.forEach((x, i) => {
       if (map.badge == null && /badge|employee\s*(id|#|no)/.test(x)) map.badge = i;
+      else if (map.rank == null && /^(rank|title)$/.test(x.trim())) map.rank = i;
+      else if (map.company == null && /company|employer|business|sponsor|organi[sz]ation/.test(x)) map.company = i;
       else if (map.name == null && /name|attend|guest/.test(x)) map.name = i;
       else if (map.seats == null && /seat|#|count|qty/.test(x)) map.seats = i;
       else if (map.table == null && /table/.test(x)) map.table = i;
-      else if (map.aff == null && /unit|org|affil|division|agency/.test(x)) map.aff = i;
+      else if (map.aff == null && /unit|org|affil|division|agency|bureau/.test(x)) map.aff = i;
       else if (map.type == null && /type|kind/.test(x)) map.type = i;
       else if (map.pay == null && /pay|paid/.test(x)) map.pay = i;
       else if (map.guests == null && /guests|names/.test(x)) map.guests = i;
@@ -542,11 +544,19 @@ IM.parsePaste = function (text) {
   const get = (r, k) => map[k] == null ? '' : String(r[map[k]] == null ? '' : r[map[k]]).trim();
   return rows.map(r => {
     let name = get(r, 'name').replace(/\s+/g, ' ');
-    if (!name) return null;
+    if (!name && !get(r, 'company')) return null;
     let badge = get(r, 'badge').replace(/[^0-9A-Za-z]/g, '');
     const na = BQ.stripStatus(name);
     if ((na.na || na.nr) && na.name) name = na.name;
-    if (IM.guessType(name) === 'Guest') { const c = BQ.cleanPerson(name); if (c.name) { name = c.name; badge = badge || c.badge; } }
+    let rank = get(r, 'rank'), company = get(r, 'company'), aff = get(r, 'aff');
+    if (IM.guessType(name) === 'Guest') {
+      const c = BQ.cleanPerson(name); if (c.name) { name = c.name; badge = badge || c.badge; }
+      const co = !company && BQ.splitCompany(name);
+      if (co && !(co.unit && aff)) { name = co.person; if (co.unit) aff = co.org; else company = co.org; }
+      const rk = !rank && BQ.splitRank(name);
+      if (rk && rk.rank) { name = rk.name; rank = rk.rank; }
+    }
+    if (!name && company) name = company;
     const t = get(r, 'table').replace(/^table\s*/i, '').replace(/\*$/, '');
     const typeTxt = get(r, 'type').toLowerCase();
     const type = (BQ.PARTY_TYPES.find(x => typeTxt && (x.k.toLowerCase() === typeTxt || x.label.toLowerCase().indexOf(typeTxt) >= 0)) || {}).k || IM.guessType(name);
@@ -557,7 +567,7 @@ IM.parsePaste = function (text) {
     return {
       vip, vipCount: vip && /^\d+$/.test(vipTxt) ? Number(vipTxt) : 0,
       seatsGiven: parseInt(get(r, 'seats'), 10) > 0, vipGiven: map.vip != null && vipTxt !== '',
-      name, badge, notAttending: na.na && !!na.name, noResponse: na.nr && !!na.name, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff: get(r, 'aff'), type, pay,
+      name, badge, rank, company, notAttending: na.na && !!na.name, noResponse: na.nr && !!na.name, seats: Math.max(1, parseInt(get(r, 'seats'), 10) || 1), table: t, aff, type, pay,
       guests: get(r, 'guests').split(/[;\n]/).map(s => s.trim()).filter(Boolean), notes: get(r, 'notes'), phone: get(r, 'phone'), email: get(r, 'email')
     };
   }).filter(Boolean);
@@ -581,7 +591,7 @@ IM.pasteDialog = function () {
         const vipDef = IM.readVip(m.el, 'ppVip');
         const changes = rows.map(r => ({
           kind: 'party', before: null, after: {
-            name: r.name, badge: r.badge || '', notAttending: !!r.notAttending, noResponse: !!r.noResponse, type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
+            name: r.name, badge: r.badge || '', rank: r.rank || '', company: r.company || '', notAttending: !!r.notAttending, noResponse: !!r.noResponse, type: r.type, aff: r.aff, seats: r.seatsGiven ? r.seats : defSeats, table: known.has(r.table) ? r.table : '', guests: r.guests, needs: [], pay: r.pay, payNote: '',
             phone: r.phone, email: r.email, notes: [r.notes, r.table && !known.has(r.table) && !r.notAttending ? 'Asked for Table ' + r.table + ' (not in the room)' : ''].filter(Boolean).join('. '), checkedIn: 0, pinned: false, group: '',
             vip: r.vip, vipCount: r.vipCount, vipIn: 0
           }
@@ -599,7 +609,7 @@ IM.pasteDialog = function () {
     const already = rows.filter(r => r.type === 'Guest' && BQ.sameNameParties(r.name, r.badge, null).length);
     m.el.querySelector('#ppPrev').innerHTML = rows.length ? '<p><b>' + rows.length + '</b> guests, <b>' + rows.reduce((s, r) => s + r.seats, 0) + '</b> seats:</p>' +
       (already.length ? '<p class="warn small">👥 ' + BQ.plural(already.length, 'name') + ' already on the guest list (' + already.slice(0, 5).map(r => BQ.esc(r.name)).join(', ') + (already.length > 5 ? '…' : '') + '). After adding, use <b>Review duplicates</b> on the Guest List to merge the same person or keep two different people.</p>' : '') + '<div class="scroll-box"><table class="grid"><thead><tr><th>Name</th><th>Seats</th><th>Table</th><th>Unit / org</th><th>Type</th></tr></thead><tbody>' +
-      rows.map(r => '<tr><td>' + BQ.esc(r.name) + (r.badge ? ' <span class="badgechip">#' + BQ.esc(r.badge) + '</span>' : '') + (r.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : r.noResponse ? ' <span class="nrchip">❔ No response</span>' : '') + '</td><td class="c">' + r.seats + '</td><td class="c">' + BQ.esc(r.table) + '</td><td>' + BQ.esc(r.aff) + '</td><td>' + BQ.typeInfo(r.type).icon + ' ' + BQ.esc(BQ.typeInfo(r.type).label) + '</td></tr>').join('') + '</tbody></table></div>' : '';
+      rows.map(r => '<tr><td>' + BQ.esc(BQ.displayName(r)) + (r.badge ? ' <span class="badgechip">#' + BQ.esc(r.badge) + '</span>' : '') + (r.notAttending ? ' <span class="nachip">🚫 Not attending</span>' : r.noResponse ? ' <span class="nrchip">❔ No response</span>' : '') + '</td><td class="c">' + r.seats + '</td><td class="c">' + BQ.esc(r.table) + '</td><td>' + BQ.esc(r.aff) + '</td><td>' + BQ.typeInfo(r.type).icon + ' ' + BQ.esc(BQ.typeInfo(r.type).label) + '</td></tr>').join('') + '</tbody></table></div>' : '';
   };
   setTimeout(() => ta.focus(), 40);
 };

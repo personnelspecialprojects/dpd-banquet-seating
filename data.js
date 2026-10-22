@@ -52,9 +52,11 @@ BQ.DEFAULT_SETTINGS = {
 BQ.settings = () => Object.assign({}, BQ.DEFAULT_SETTINGS, (BQ.state.event && BQ.state.event.settings) || {});
 
 BQ.ZONE_COLORS = ['#7E57C2', '#26A69A', '#EF6C00', '#5C6BC0', '#C2185B', '#2E7D32', '#8D6E63', '#00838F'];
-BQ.CHAIR_GUEST = ['#F2B35B', '#8BC34A', '#EF8A80', '#BA8CD3', '#4DB6AC', '#FFD54F', '#BCAAA4', '#F48FB1', '#AED581', '#FFAB91'];
+// Guest chairs: each party at a table gets its own color (no reds: red on the map means open seats / a problem)
+BQ.CHAIR_GUEST = ['#F2B35B', '#8BC34A', '#4DB6AC', '#BA8CD3', '#FFD54F', '#BCAAA4', '#80DEEA', '#AED581', '#FFCC80', '#E6EE9C'];
 BQ.CHAIR_ORG = ['#1E88E5', '#64B5F6', '#1565C0', '#90CAF9', '#0D47A1'];
-BQ.CHAIR_TYPE = { Host: '#7B1FA2', Volunteers: '#00897B', Performers: '#D81B60', Hold: '#FFB300', VIP: '#C9A227' };
+BQ.CHAIR_TYPE = { Host: '#7B1FA2', Volunteers: '#00897B', Performers: '#8D6E63', Hold: '#FFB300', VIP: '#C9A227' };
+BQ.CHAIR_RESERVED = '#D9A520';
 
 /* ---------------------------------------------------------------------
    Small helpers
@@ -139,7 +141,7 @@ BQ.stats = function () {
   const vipArrived = ps.reduce((s, p) => s + Math.min(Number(p.vipIn) || 0, BQ.vipCount(p)), 0);
   return { parties: ps.length, requested, seated, waiting: requested - seated, waitingParties: BQ.unseated().length,
     cap, open, full, hold, resTables, resSeats, tables: ts.length, arrived, unpaid, vipInvited, vipArrived, vipParties: ps.filter(p => p.vip).length,
-    notAttending: out.length, notAttendingSeats: out.reduce((s, p) => s + (Number(p.seats) || 0), 0), noResponse: ps.filter(p => p.noResponse).length };
+    notAttending: out.length, notAttendingSeats: out.reduce((s, p) => s + (Number(p.seats) || 0), 0), noResponse: ps.filter(p => p.noResponse).length, pickedUp: BQ.state.parties.filter(p => p.pickup).length };
 };
 
 /* ---------------------------------------------------------------------
@@ -796,6 +798,8 @@ BQ.mergeParties = async function (keepId, dropIds, seats) {
     after.guests = (after.guests || []).concat((d.guests || []).filter(g => lc(g) !== lc(after.name) && !(after.guests || []).some(x => lc(x) === lc(g))));
     (d.needs || []).forEach(n => { if (!after.needs.some(x => x.type === n.type && String(x.target || '') === String(n.target || '') && (x.text || '') === (n.text || ''))) after.needs.push(BQ.clone(n)); });
     if (!after.badge && d.badge) after.badge = d.badge;
+    if (!after.company && d.company) after.company = d.company;
+    if (!after.rank && d.rank) after.rank = d.rank;
     if (!after.aff && d.aff) after.aff = d.aff;
     if (!after.table && d.table) after.table = d.table;
     if (!after.phone && d.phone) after.phone = d.phone;
@@ -999,4 +1003,57 @@ BQ.fixNotAttendingLabels = async function () {
   BQ.ui && BQ.ui.toast('Found status labels in names and moved them to the checkboxes: ' + (parts.join(', ') || BQ.plural(f.changes.length, 'record') + ' updated') +
     (f.freed.length ? '. Freed seats at Table ' + Array.from(new Set(f.freed)).join(', ') : '') + '.', 'ok', { label: 'Undo', onClick: () => BQ.undo() });
   return f.changes.length;
+};
+
+/* ---------------------------------------------------------------------
+   Ticket pick-up: p.pickup = { at: ISO date, by: "who picked them up" } (null = not yet)
+   --------------------------------------------------------------------- */
+BQ.fmtDate = iso => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleDateString(); };
+BQ.pickupText = p => p && p.pickup ? 'Picked up ' + BQ.fmtDate(p.pickup.at) + (p.pickup.by ? ' by ' + p.pickup.by : '') : '';
+BQ.setPickup = (a, by, at) => { a.pickup = { at: at || new Date().toISOString(), by: String(by || '').trim() }; return a; };
+
+/* ---------------------------------------------------------------------
+   Organization / company (p.company) — e.g. a sponsor's employee.
+   Person name given → "Nielsen, Jared (Quik Trip)".  No person name → the company fills the name ("Quik Trip").
+   --------------------------------------------------------------------- */
+BQ.orgOnly = p => !!(p && p.company) && (!String(p.name || '').trim() || String(p.name).trim().toLowerCase() === String(p.company).trim().toLowerCase());
+BQ.nameIsOrg = p => BQ.isOrg(p) || BQ.orgOnly(p);
+BQ.lastFirst = name => { const n = BQ.splitName(name); return n.last + (n.first ? ', ' + n.first : ''); };
+BQ.withCompany = (text, p) => text + (p && p.company && !BQ.orgOnly(p) ? ' (' + p.company + ')' : '');
+BQ.withRank = (text, p) => { const r = p && !BQ.nameIsOrg(p) ? BQ.rankShort(p.rank) : ''; return (r ? r + ' ' : '') + text; };
+// how a guest record shows on lists: rank before the name, company in parentheses after it
+BQ.displayName = (p, lastFirst) => BQ.nameIsOrg(p) ? (p.name || p.company || '') : BQ.withRank(BQ.withCompany(lastFirst ? BQ.lastFirst(p.name) : p.name, p), p);
+BQ.partySortKey = p => BQ.sortKey(p.name || p.company || '', BQ.nameIsOrg(p));
+
+// "Jared Nielsen (Quik Trip)" / "Jared Nielsen - Quik Trip" typed into the name → suggest moving the company out
+BQ.UNIT_WORDS = /\b(unit|division|patrol|bureau|section|squad|detail|academy|investigations?|services|command|office|team|substation|deployment|swat|k-?9|narcotics|homicide|robbery|traffic|vice|gang|intel(ligence)?)\b/i;
+BQ.looksLikePerson = s => { const w = String(s || '').replace(/\./g, '').trim().split(/\s+/); return w.length >= 2 && w.length <= 5 && w.every(x => /^[A-Za-z][A-Za-z'’\-]*,?$/.test(x)) && !BQ.UNIT_WORDS.test(s); };
+BQ.splitCompany = function (raw) {
+  const s = String(raw || '').trim();
+  let m = s.match(/^(.+?)\s*\(([^()]{2,60})\)\s*$/) || s.match(/^(.+?)\s+[-–—|\/]\s+(.{2,60})$/);
+  if (!m) return null;
+  const person = m[1].trim(), org = m[2].trim();
+  if (!BQ.looksLikePerson(BQ.cleanPerson(person).name)) return null;
+  if (/^#?\d+$/.test(org) || /\b(badge|guest|plus|\+\d|not\s+attending|no\s+(response|reply|rsvp)|retired|ret\.?|jr|sr|ii|iii)\b/i.test(org) || BQ.RANK_TOKEN.test(org)) return null;
+  return { person, org, unit: BQ.UNIT_WORDS.test(org) };
+};
+
+// Rank / title typed in front of the name: "Sgt. John Smith", "SERGEANT JOHN SMITH", "Det John Smith"
+BQ.RANK_LEAD = /^(asst\.?\s+chief(?:\s+of\s+police)?|assistant\s+chief(?:\s+of\s+police)?|deputy\s+chief(?:\s+of\s+police)?|chief\s+of\s+police|executive\s+assistant\s+chief|major|maj\.?|captain|capt\.?|lieutenant|lt\.?|sergeant|sgt\.?|senior\s+corporal|sr\.?\s*corporal|sr\.?\s*cpl\.?|corporal|cpl\.?|detective|det\.?|police\s+officer|officer|ofc\.?|mr\.?|mrs\.?|ms\.?|dr\.?)\s+(?=\S+\s+\S)/i;
+BQ.splitRank = function (raw) {
+  const s = String(raw || '').trim();
+  const m = s.match(BQ.RANK_LEAD);
+  return m ? { rank: m[1].trim(), name: s.slice(m[0].length).trim() } : { rank: '', name: s };
+};
+// One-time clean-up: ranks and organizations typed into the name field
+BQ.scanRankCompany = function () {
+  const out = [];
+  BQ.state.parties.forEach(p => {
+    if (BQ.isOrg(p)) return;
+    let name = p.name, rank = '', org = '', as = 'company';
+    if (!p.company) { const c = BQ.splitCompany(name); if (c) { name = c.person; org = c.org; as = c.unit ? 'unit' : 'company'; } }
+    if (!p.rank) { const r = BQ.splitRank(name); if (r.rank) { rank = r.rank; name = r.name; } }
+    if (rank || org) out.push({ p, name, rank, org, as });
+  });
+  return out;
 };

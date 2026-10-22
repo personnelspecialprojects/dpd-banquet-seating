@@ -219,7 +219,10 @@ body.dragging .wl-drop { display: block; }
 .map-legend { position: absolute; left: 12px; bottom: 10px; right: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; font-size: 12.5px; pointer-events: none; }
 .lg { display: inline-flex; align-items: center; gap: 6px; }
 .lg i { width: 14px; height: 14px; border-radius: 50%; border: 3px solid; background: #fff; display: inline-block; }
-.lg i.chairdot { border: 0; border-radius: 3px; width: 12px; height: 12px; }
+.lg i.chairdot { border: 0; border-radius: 3px; width: 12px; height: 12px; margin-right: -3px; }
+.lg i.chairdot:last-of-type { margin-right: 0; }
+.lg-h { font-weight: 700; color: var(--muted); }
+.lgbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; border-radius: 9px; color: #fff; font-size: 10.5px; padding: 0 4px; }
 .lg-sep { width: 1px; background: var(--line); }
 .side-panel { background: var(--card); border-left: 1px solid var(--line); padding: 14px 16px; overflow-y: auto; min-height: 0; }
 .tp-head, .sp-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; border-radius: 8px; }
@@ -535,7 +538,13 @@ table.grid tr.picked td { background: var(--accent-soft); }
   .pmap-svg { flex: 1; min-height: 0; }
   .pmap-svg svg { width: 100%; height: 100%; }
   .plegend { display: flex; gap: 14px; font-size: 8.5pt; flex-wrap: wrap; margin-top: 4px; }
-  .plegend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2.5px solid; margin-right: 4px; vertical-align: -1px; }
+  .plegend { gap: 4px 12px !important; align-items: center; border-top: 1px solid #ccc; padding-top: 5px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .plegend .lg { display: inline-flex; align-items: center; gap: 4px; }
+  .plegend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2.5px solid; margin-right: 0; vertical-align: -1px; background: #fff; }
+  .plegend i.chairdot { border: 0; border-radius: 2px; width: 10px; height: 10px; margin-right: -2px; }
+  .plegend .lgbadge { min-width: 14px; height: 14px; font-size: 8pt; }
+  .plegend .lg-h { color: #14213D; }
+  .plegend .lg-sep { width: 1px; height: 12px; background: #bbb; }
   .pa-cols { column-count: 3; column-gap: .3in; font-size: 10.5pt; }
   .pa-letter { font-weight: 800; font-size: 13pt; color: #14213D; border-bottom: 1px solid #999; margin: 6px 0 2px; break-after: avoid; }
   .pa-row { display: flex; justify-content: space-between; gap: 6px; padding: 1px 0; break-inside: avoid; border-bottom: 1px dotted #ccc; }
@@ -556,7 +565,10 @@ table.grid tr.picked td { background: var(--accent-soft); }
   .ptix th, .ptix td { border: 1px solid #888; padding: 4px 6px; text-align: left; vertical-align: middle; height: 0.36in; }
   .ptix th { background: #E8EDF5; font-size: 9.5pt; height: auto; }
   .ptix td.c { text-align: center; }
-  .ptix .c0 { width: 0.9in; } .ptix .c1 { width: 2.4in; } .ptix .c2 { width: 1.1in; } .ptix .c3 { width: 3in; }
+  .ptix .c0 { width: 0.8in; } .ptix .c1 { width: 2.1in; } .ptix .c2 { width: 0.85in; } .ptix .c3, .ptix .c4 { width: 0.6in; text-align: center; } .ptix .c5 { width: 0.55in; text-align: center; font-weight: 700; } .ptix .c6 { width: 2.6in; }
+  .ptix th.c3, .ptix th.c4, .ptix th.c5, .ptix th.c2 { text-align: center; }
+  .ptix td.c2 { text-align: center; }
+  .ptix tr.done td.c0, .ptix tr.done td.c6 { color: #1E5E2A; font-size: 9.5pt; }
   .ptix thead { display: table-header-group; }
   .ptix tr { break-inside: avoid; }
   .box { font-size: 14pt; width: 30px; text-align: center; }
@@ -614,8 +626,10 @@ table.grid tr.picked td { background: var(--accent-soft); }
 .dg-recs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
 .dg-rec { background: var(--soft); border-radius: 10px; padding: 8px 10px; }
 .dg-act { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.tkopt { display: flex !important; align-items: center; gap: 10px; margin: 8px 0; font-weight: 500; cursor: pointer; }
-.field .tkopt input[type=radio] { width: auto !important; margin: 0; flex: 0 0 auto; }
+.tkopt { display: flex !important; align-items: flex-start; gap: 10px; margin: 8px 0; font-weight: 500; cursor: pointer; line-height: 1.35; }
+.tkopt > span { flex: 1 1 auto; min-width: 0; }
+.field .tkopt input[type=radio], .field .tkopt input[type=checkbox] { width: 16px !important; height: 16px !important; min-height: 0; padding: 0; margin: 1px 0 0; flex: 0 0 16px; }
+.field .tkopt { margin: 6px 0; }
 
 /* ---- Not attending ---- */
 .nachip { display: inline-block; background: var(--badbg); color: var(--bad); border: 1px solid rgba(198,40,40,.25); border-radius: 999px; padding: 0 8px; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: 1px; }
@@ -627,7 +641,16 @@ tr.natr td:first-child, tr.natr:hover td { opacity: 1; }
 .rs.r-na { background: var(--soft); color: var(--muted); }
 .route li.r-na { color: var(--muted); }
 @media print {
-  .ptix tr.grp td { background: #F6E3E3 !important; color: #8B1A1A; font-weight: 700; font-size: 11pt; height: auto; padding: 6px; border-top: 2px solid #8B1A1A; }
+  .ptix tr.grp td { background: #F6E3E3 !important; color: #8B1A1A; font-weight: 700; font-size: 11pt; height: auto; padding: 6px; border-top: 2px solid #8B1A1A; text-align: left; }
+  .ptix tr.grp.pk td { background: #E3F2E5 !important; color: #1E5E2A; border-top-color: #1E5E2A; }
 }
 .nrchip { display: inline-block; background: #EEF0FF; color: #3F3D9E; border: 1px solid rgba(63,61,158,.25); border-radius: 999px; padding: 0 8px; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: 1px; }
 .rec .nrchip { padding: 0 4px; font-size: 10.5px; }
+
+.pkchip { display: inline-block; background: var(--okbg); color: var(--ok); border: 1px solid rgba(46,125,50,.25); border-radius: 999px; padding: 0 8px; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: 1px; }
+.pkbox { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; }
+.pkbox input[type=date] { width: auto !important; }
+.field.pkbox #pfPkBy { width: 280px !important; max-width: 100%; }
+
+.namebadge.rk { grid-template-columns: 150px 1fr 130px; }
+@media (max-width: 640px) { .namebadge.rk { grid-template-columns: 1fr; } }

@@ -24,7 +24,10 @@ BQ.schema = {
     ['VipReception', 'Boolean'], ['VipCount', 'Number'], ['VipCheckedIn', 'Number'],
     ['Badge', 'Text', 'opt'],        // optional: without it the badge rides at the end of the name ("… #12963")
     ['NotAttending', 'Boolean', 'opt'], // optional: without it the name carries " - NOT ATTENDING"
-    ['NoResponse', 'Boolean', 'opt']   // optional: without it the name carries " - NO RESPONSE"
+    ['NoResponse', 'Boolean', 'opt'],  // optional: without it the name carries " - NO RESPONSE"
+    ['TicketPickup', 'Text', 'opt'],   // optional: {"at","by"} when tickets were picked up; without it this rides inside NeedsJson
+    ['Organization', 'Text', 'opt'],   // optional: company / organization (e.g. a sponsor); without it this rides inside NeedsJson
+    ['Rank', 'Text', 'opt']            // optional: rank or title shown before the name; without it this rides inside NeedsJson
   ],
   Banquet_Awards: [
     ['EventId', 'Number'], ['AwardCategory', 'Text'], ['AwardKind', 'Text'], ['ProgramOrder', 'Number'],
@@ -89,12 +92,18 @@ BQ.map_ = {
       notes: it.PartyNotes || '', guests: lines(it.GuestNames), checkedIn: Number(it.CheckedIn) || 0,
       checkInTime: it.CheckInTime || '', pinned: !!it.Pinned,
       vip: !!it.VipReception, vipCount: Number(it.VipCount) || 0, vipIn: Number(it.VipCheckedIn) || 0,
-      badge: it.Badge || '', notAttending: !!it.NotAttending, noResponse: !!it.NoResponse
+      badge: it.Badge || '', notAttending: !!it.NotAttending, noResponse: !!it.NoResponse,
+      pickup: jparse(it.TicketPickup, null), company: it.Organization || '', rank: it.Rank || ''
     };
   },
   // Without a Badge column the badge rides along at the end of the name ("Carlos Gomez #12963")
   partyFromFixed(it) {
     const p = BQ.map_.partyFrom(it);
+    // ticket pick-up kept inside NeedsJson when the TicketPickup column isn't there
+    const pk = (p.needs || []).find(n => n && n.type === '_pickup');
+    if (pk) { if (!p.pickup) p.pickup = { at: pk.at || '', by: pk.by || '' }; p.needs = p.needs.filter(n => n.type !== '_pickup'); }
+    const meta = (p.needs || []).find(n => n && n.type === '_meta');   // company / rank kept here when those columns aren't there
+    if (meta) { p.company = p.company || meta.company || ''; p.rank = p.rank || meta.rank || ''; p.needs = p.needs.filter(n => n.type !== '_meta'); }
     const noNA = !BQ.fieldOk('Banquet_Parties', 'NotAttending'), noNR = !BQ.fieldOk('Banquet_Parties', 'NoResponse');
     if (noNA || noNR) {
       const n = BQ.stripStatus(p.name);
@@ -107,14 +116,19 @@ BQ.map_ = {
     return Object.assign({
       Title: (p.name || '(no name)') + (p.badge && !BQ.fieldOk('Banquet_Parties', 'Badge') ? ' #' + p.badge : '') + (p.notAttending && !BQ.fieldOk('Banquet_Parties', 'NotAttending') ? ' - NOT ATTENDING' : '') + (p.noResponse && !p.notAttending && !BQ.fieldOk('Banquet_Parties', 'NoResponse') ? ' - NO RESPONSE' : ''), EventId: p.eventId, PartyType: p.type || 'Guest', Affiliation: p.aff || '',
       Seats: Number(p.seats) || 0, TableNo: p.table ? String(p.table) : '', GroupKey: p.group || '',
-      ContactPhone: p.phone || '', ContactEmail: p.email || '', NeedsJson: JSON.stringify(p.needs || []), PartyNotes: p.notes || '',
+      ContactPhone: p.phone || '', ContactEmail: p.email || '', NeedsJson: JSON.stringify((p.needs || []).concat(p.pickup && !BQ.fieldOk('Banquet_Parties', 'TicketPickup') ? [{ type: '_pickup', at: p.pickup.at || '', by: p.pickup.by || '' }] : [],
+        (p.company && !BQ.fieldOk('Banquet_Parties', 'Organization')) || (p.rank && !BQ.fieldOk('Banquet_Parties', 'Rank'))
+          ? [{ type: '_meta', company: BQ.fieldOk('Banquet_Parties', 'Organization') ? '' : p.company || '', rank: BQ.fieldOk('Banquet_Parties', 'Rank') ? '' : p.rank || '' }] : [])), PartyNotes: p.notes || '',
       GuestNames: (p.guests || []).join('\n'), CheckedIn: Number(p.checkedIn) || 0,
       CheckInTime: p.checkInTime || null, Pinned: !!p.pinned,
       VipReception: !!p.vip, VipCount: Number(p.vipCount) || 0, VipCheckedIn: Number(p.vipIn) || 0
     }, BQ.config.trackPayment ? { PaymentStatus: p.pay || '', PaymentNote: p.payNote || '' } : {},
     BQ.fieldOk('Banquet_Parties', 'Badge') ? { Badge: p.badge || '' } : {},
     BQ.fieldOk('Banquet_Parties', 'NotAttending') ? { NotAttending: !!p.notAttending } : {},
-    BQ.fieldOk('Banquet_Parties', 'NoResponse') ? { NoResponse: !!p.noResponse } : {});
+    BQ.fieldOk('Banquet_Parties', 'NoResponse') ? { NoResponse: !!p.noResponse } : {},
+    BQ.fieldOk('Banquet_Parties', 'TicketPickup') ? { TicketPickup: p.pickup ? JSON.stringify(p.pickup).slice(0, 255) : '' } : {},
+    BQ.fieldOk('Banquet_Parties', 'Organization') ? { Organization: p.company || '' } : {},
+    BQ.fieldOk('Banquet_Parties', 'Rank') ? { Rank: p.rank || '' } : {});
   },
   awardFrom(it) {
     return {

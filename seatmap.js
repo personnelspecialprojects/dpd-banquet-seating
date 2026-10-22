@@ -158,7 +158,7 @@ BQ.tableLook = function (t, opts) {
     // every chair shows as taken by the block (not draggable: there's no guest record behind it)
     look.sub = 'RESERVED';
     const taken = look.chairs.length;
-    for (let i = taken; i < u.cap; i++) look.chairs.push({ color: '#D9A520', pid: null, name: t.res || 'Reserved' });
+    for (let i = taken; i < u.cap; i++) look.chairs.push({ color: BQ.CHAIR_RESERVED, pid: null, name: t.res || 'Reserved' });
   }
   if (t.res) look.below = t.res;
   else if (status === 'hold' && t.note) look.below = t.note;
@@ -584,19 +584,9 @@ BQ.screens.seat = {
   },
 
   renderLegend() {
-    const V = BQ.seatView, el = document.getElementById('mapLegend');
+    const el = document.getElementById('mapLegend');
     if (!el) return;
-    let items = [];
-    if (V.colorBy === 'status') items = [['#2E7D32', 'Full'], ['#C62828', 'Open seats'], ['#9AA5B4', 'Empty'], ['#E08600', 'On hold'], ['#A87900', 'Reserved']];
-    if (V.colorBy === 'pay') items = [['#2E7D32', 'All paid/comp'], ['#E0A100', 'Pending/invoice'], ['#C62828', 'Not paid'], ['#9AA5B4', 'Not set']];
-    if (V.colorBy === 'checkin') items = [['#2E7D32', 'All here'], ['#E0A100', 'Some here'], ['#9AA5B4', 'None yet']];
-    if (V.colorBy === 'needs') items = [['#2E7D32', 'Requests met'], ['#E0A100', 'Reminder/waiting'], ['#C62828', 'Request not met']];
-    if (V.colorBy === 'zone') items = (BQ.settings().zones || []).map(z => [z.color, z.name]);
-    if (V.colorBy === 'vip') items = [['#C9A227', 'Has VIP reception guests'], ['#9AA5B4', 'None']];
-    const chairs = '<span class="lg"><i class="chairdot" style="background:#1E88E5"></i>Units/orgs</span><span class="lg"><i class="chairdot" style="background:#F2B35B"></i>Guests</span><span class="lg"><i class="chairdot" style="background:#7B1FA2"></i>Host</span><span class="lg"><i class="chairdot" style="background:#00897B"></i>Volunteers</span>';
-    el.innerHTML = items.map(i => '<span class="lg"><i style="border-color:' + i[0] + '"></i>' + BQ.esc(i[1]) + '</span>').join('') +
-      (V.colorBy === 'zone' && !items.length ? '<span class="lg muted">No areas yet — select tables and give them an area</span>' : '') +
-      '<span class="lg-sep"></span>' + chairs;
+    el.innerHTML = BQ.mapLegendHtml(BQ.seatView.colorBy);
   },
 
   renderWaiting() {
@@ -668,7 +658,7 @@ BQ.partyCardHtml = function (p, o) {
   const group = (p.group ? '<span class="muted small" title="Part of a split party">⛓</span>' : '') + (p.vip ? ' <span class="vipchip" title="VIP reception">⭐</span>' : '');
   return '<div class="pcard' + (o.selected ? ' selected' : '') + (BQ.isOrg(p) ? ' org' : '') + '" data-pid="' + p.id + '"' + (o.color ? ' style="--pc:' + o.color + '"' : '') + '>' +
     '<div class="pc-main"><span class="pc-icon" title="' + BQ.esc(ti.label) + '">' + ti.icon + '</span>' +
-    '<span class="pc-name">' + BQ.esc(p.name) + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + group + (p.pinned ? ' 📌' : '') + '</span>' +
+    '<span class="pc-name">' + BQ.esc(BQ.displayName(p)) + (p.badge ? ' <span class="badgechip">#' + BQ.esc(p.badge) + '</span>' : '') + group + (p.pinned ? ' 📌' : '') + '</span>' +
     '<span class="pc-seats" title="Seats">' + p.seats + '</span></div>' +
     '<div class="pc-sub">' + (p.aff ? '<span class="muted">' + BQ.esc(p.aff) + '</span>' : '') + needs + pay +
     (o.actions ? o.actions : '<button class="edit linkbtn" title="Edit details">Edit</button>') + '</div></div>';
@@ -906,4 +896,64 @@ BQ.reserveDialog = function () {
     BQ.commit('Released tables reserved for ' + label, [BQ.eventChange(e => e.layout.tables.forEach(t => { if (t.st === 'reserved' && (t.res || 'Reserved') === label) { t.st = ''; t.res = ''; } }))]);
   });
   setTimeout(() => m.el.querySelector('#rvTables').focus(), 40);
+};
+
+/* ---------------------------------------------------------------------
+   Map legend (screen, printed map, map picture): table rings, chair colors, badges.
+   Chair types only show when they're actually on the map.
+   --------------------------------------------------------------------- */
+BQ.mapLegend = function (colorBy) {
+  let rings = [];
+  if (!colorBy || colorBy === 'status') rings = [['#2E7D32', 'Full'], ['#C62828', 'Open seats'], ['#9AA5B4', 'Empty'], ['#E08600', 'On hold'], ['#A87900', 'Reserved']];
+  if (colorBy === 'pay') rings = [['#2E7D32', 'All paid/comp'], ['#E0A100', 'Pending/invoice'], ['#C62828', 'Not paid'], ['#9AA5B4', 'Not set']];
+  if (colorBy === 'checkin') rings = [['#2E7D32', 'All here'], ['#E0A100', 'Some here'], ['#9AA5B4', 'None yet']];
+  if (colorBy === 'needs') rings = [['#2E7D32', 'Requests met'], ['#E0A100', 'Reminder/waiting'], ['#C62828', 'Request not met']];
+  if (colorBy === 'zone') rings = (BQ.settings().zones || []).map(z => [z.color, z.name]);
+  if (colorBy === 'vip') rings = [['#C9A227', 'Has VIP reception guests'], ['#9AA5B4', 'None']];
+  const seated = BQ.state.parties.filter(p => p.table && BQ.tableByNum(p.table));
+  const has = k => seated.some(p => p.type === k);
+  const chairs = [];
+  if (seated.some(p => !BQ.CHAIR_TYPE[p.type] && !BQ.isOrg(p))) chairs.push([BQ.CHAIR_GUEST.slice(0, 4), 'Guests (each party at a table gets its own color)']);
+  if (seated.some(p => !BQ.CHAIR_TYPE[p.type] && BQ.isOrg(p))) chairs.push([BQ.CHAIR_ORG.slice(0, 3), 'Units / organizations']);
+  [['Host', 'Host organization'], ['VIP', 'VIP / command staff'], ['Volunteers', 'Volunteers'], ['Performers', 'Performers'], ['Hold', 'Seats on hold']]
+    .forEach(([k, label]) => { if (has(k)) chairs.push([[BQ.CHAIR_TYPE[k]], label]); });
+  if (BQ.tables().some(t => t.st === 'reserved')) chairs.push([[BQ.CHAIR_RESERVED], 'Reserved block (e.g. sponsors)']);
+  chairs.push([['#FFFFFF'], 'Empty chair']);
+  const marks = [['★', '#C9A227', 'Award recipient at this table'], ['+2', '#C62828', 'More people than chairs']];
+  return { rings, chairs, marks, numbers: 'Numbers on a table: seated / chairs' };
+};
+BQ.mapLegendHtml = function (colorBy, print) {
+  const L = BQ.mapLegend(colorBy);
+  const chair = c => '<i class="chairdot" style="background:' + c + (c === '#FFFFFF' ? ';box-shadow:inset 0 0 0 1.5px #A9B4C2' : '') + '"></i>';
+  return '<span class="lg lg-h">Tables:</span>' + L.rings.map(i => '<span class="lg"><i style="border-color:' + i[0] + '"></i>' + BQ.esc(i[1]) + '</span>').join('') +
+    (colorBy === 'zone' && !L.rings.length ? '<span class="lg muted">No areas yet — select tables and give them an area</span>' : '') +
+    '<span class="lg-sep"></span><span class="lg lg-h">Chairs:</span>' + L.chairs.map(c => '<span class="lg">' + c[0].map(chair).join('') + BQ.esc(c[1]) + '</span>').join('') +
+    '<span class="lg-sep"></span>' + L.marks.map(m => '<span class="lg"><b class="lgbadge" style="background:' + m[1] + '">' + m[0] + '</b>' + BQ.esc(m[2]) + '</span>').join('') +
+    (print ? '<span class="lg">' + BQ.esc(L.numbers) + '</span>' : '');
+};
+// The same legend drawn onto a canvas (for the map picture)
+BQ.drawLegendCanvas = function (ctx, x, y, maxW, k) {
+  const L = BQ.mapLegend('status');
+  const items = [{ head: 'Tables:' }].concat(L.rings.map(r => ({ ring: r[0], text: r[1] })), [{ head: 'Chairs:' }], L.chairs.map(c => ({ chairs: c[0], text: c[1] })),
+    [{ head: 'Marks:' }], L.marks.map(m => ({ badge: m[0], color: m[1], text: m[2] })), [{ text: L.numbers }]);
+  ctx.font = (13 * k) + 'px Segoe UI, Arial';
+  ctx.textBaseline = 'middle';
+  let cx = x, cy = y;
+  const lineH = 24 * k;
+  items.forEach(it => {
+    const sw = it.ring ? 16 * k : it.chairs ? it.chairs.length * 15 * k : it.badge ? 22 * k : 0;
+    const label = it.head || it.text;
+    if (it.head) ctx.font = 'bold ' + (13 * k) + 'px Segoe UI, Arial';
+    const w = sw + (sw ? 6 * k : 0) + ctx.measureText(label).width + 18 * k;
+    if (it.head && cx > x) { cx += 6 * k; }
+    if (cx + w > x + maxW) { cx = x; cy += lineH; }
+    if (it.ring) { ctx.beginPath(); ctx.arc(cx + 8 * k, cy, 6 * k, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 3 * k; ctx.strokeStyle = it.ring; ctx.stroke(); }
+    if (it.chairs) it.chairs.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(cx + i * 15 * k, cy - 6 * k, 12 * k, 12 * k); ctx.lineWidth = 1 * k; ctx.strokeStyle = c === '#FFFFFF' ? '#A9B4C2' : 'rgba(0,0,0,.3)'; ctx.strokeRect(cx + i * 15 * k, cy - 6 * k, 12 * k, 12 * k); });
+    if (it.badge) { ctx.beginPath(); ctx.arc(cx + 10 * k, cy, 10 * k, 0, Math.PI * 2); ctx.fillStyle = it.color; ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (11 * k) + 'px Segoe UI, Arial'; ctx.textAlign = 'center'; ctx.fillText(it.badge, cx + 10 * k, cy + 1 * k); ctx.textAlign = 'left'; }
+    ctx.fillStyle = it.head ? '#1F3A5F' : '#333';
+    ctx.font = (it.head ? 'bold ' : '') + (13 * k) + 'px Segoe UI, Arial';
+    ctx.fillText(label, cx + sw + (sw ? 6 * k : 0), cy);
+    cx += w;
+  });
+  return cy + lineH - y;
 };

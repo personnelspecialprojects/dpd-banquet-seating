@@ -275,8 +275,8 @@ BQ.addRecipientsAsGuests = async function (people, o) {
     const c = BQ.cleanPerson(p.r.name);
     return {
       kind: 'party', before: null, after: {
-        name: c.name || p.r.name, badge: p.r.badge || c.badge || '', noResponse: !!p.r.nr || !!c.nr, type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
-        notes: 'Award recipient: ' + p.awards.map(BQ.awardTitle).join(', ') + (p.r.rank ? ' · ' + p.r.rank : ''),
+        name: c.name || p.r.name, badge: p.r.badge || c.badge || '', rank: p.r.rank || '', noResponse: !!p.r.nr || !!c.nr, type: 'Guest', aff: p.r.unit || '', seats: o.seats, table: '', guests: [], needs, pay: '', payNote: '', phone: '', email: '',
+        notes: 'Award recipient: ' + p.awards.map(BQ.awardTitle).join(', '),
         checkedIn: 0, pinned: false, group: '', vip: false, vipCount: 0, vipIn: 0
       }, _p: p
     };
