@@ -481,7 +481,8 @@ BQ.screens.home = {
       (e.venue ? ' · ' + BQ.esc(e.venue) : '') + '</div></div>' + (days != null && days >= 0 ? '<div class="countdown"><b>' + days + '</b><span>day' + (days === 1 ? '' : 's') + ' to go</span></div>' : '') + '</div>' +
       '<div class="stats">' +
       '<div class="stat"><b>' + s.requested + '</b><span>seats requested</span><small>' + BQ.plural(s.parties, 'party').replace('partys', 'parties') + (s.vipInvited ? ' · ⭐ ' + s.vipInvited + ' at VIP reception' : '') + (s.notAttending ? ' · 🚫 ' + s.notAttending + ' not attending' : '') + (s.noResponse ? ' · ❔ ' + s.noResponse + ' no response' : '') + '</small></div>' +
-      '<div class="stat ok"><b>' + s.seated + '</b><span>seated</span><div class="meter"><div style="width:' + pctSeated + '%"></div></div></div>' +
+      '<div class="stat ok"><b>' + s.seated + '</b><span>seated guests</span><div class="meter"><div style="width:' + pctSeated + '%"></div></div>' + (s.resSeats ? '<small>+ ' + s.resSeats + ' reserved = ' + (s.seated + s.resSeats) + ' all seats</small>' : '') + '</div>' +
+      (s.resSeats ? '<div class="stat res"><b>' + s.resSeats + '</b><span>🔒 reserved-table seats</span><small>' + BQ.plural(s.resTables, 'table') + ': ' + BQ.esc(BQ.reservations().map(b => b.label).join(', ')) + '</small></div>' : '') +
       '<div class="stat ' + (s.waiting ? 'warn' : '') + '"><b>' + s.waiting + '</b><span>waiting for a table</span></div>' +
       '<div class="stat"><b>' + s.open + '</b><span>open seats in the room</span><small>' + pctRoom + '% of ' + s.cap + ' chairs used</small></div>' +
       '<div class="stat"><b>' + s.full + '<em>/' + (s.tables - s.hold - s.resTables) + '</em></b><span>tables full</span><small>' + s.hold + ' on hold' + (s.resTables ? ' · ' + s.resTables + ' reserved' : '') + '</small></div>' +
