@@ -131,7 +131,7 @@ BQ.stats = function () {
   ts.forEach(t => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
     if (st === 'hold') { hold++; return; }
-    if (st === 'reserved') { resTables++; resSeats += u.cap; return; }
+    if (st === 'reserved') { resTables++; resSeats += BQ.reservedSeats(t); return; }
     cap += u.cap; open += u.open; used += u.used;
     if (st === 'full') full++;
   });
@@ -708,7 +708,7 @@ BQ.reservations = function () {
   BQ.tables().filter(t => t.st === 'reserved').forEach(t => {
     const k = t.res || 'Reserved';
     (by[k] = by[k] || { label: k, tables: [], seats: 0 }).tables.push(String(t.n));
-    by[k].seats += Number(t.s) || 0;
+    by[k].seats += BQ.reservedSeats(t);
   });
   return Object.keys(by).sort().map(k => { by[k].tables.sort(BQ.numSort); return by[k]; });
 };
@@ -1057,3 +1057,6 @@ BQ.scanRankCompany = function () {
   });
   return out;
 };
+
+/* Seats held by a reserved block (sponsor tables etc.): the chairs not already taken by named guests */
+BQ.reservedSeats = t => t && t.st === 'reserved' ? Math.max(0, (Number(t.s) || 0) - BQ.tableUse(t).used) : 0;
