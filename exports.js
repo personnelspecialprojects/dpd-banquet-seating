@@ -262,44 +262,88 @@ X.rostersXlsx = async function () {
   if (!X.needExcel()) return;
   const wb = X.newBook();
   const ws = wb.addWorksheet('Table Rosters');
-  ws.columns = [{ width: 30 }, { width: 8 }, { width: 24 }, { width: 46 }, { width: 40 }];
-  X.title(ws, BQ.state.event.title + ' — Table Rosters', 'Printed ' + new Date().toLocaleString(), 5);
-  let r = 4;
+  ws.columns = [{ width: 32 }, { width: 10 }, { width: 11 }, { width: 22 }, { width: 42 }, { width: 36 }];
+  X.title(ws, BQ.state.event.title + ' — Table Rosters', 'Printed ' + new Date().toLocaleString(), 6);
+  // rows 3–4: totals; row 5: spacer; tables start at row 6
+  let r = 6;
+  const first = r;
+  let seated = 0, reserved = 0;
   const fills = { full: 'FFC6E7C1', open: 'FFF8CBCB', empty: 'FFEFEFEF', hold: 'FFFFE3A3', reserved: 'FFFFF1C2' };
   X.sortedTables().forEach(t => {
-    const u = BQ.tableUse(t), st = BQ.tableStatus(t);
-    ws.mergeCells(r, 1, r, 5);
+    const u = BQ.tableUse(t), st = BQ.tableStatus(t), rs = BQ.reservedSeats(t);
+    ws.mergeCells(r, 1, r, 6);
     const h = ws.getCell(r, 1);
-    h.value = 'TABLE ' + t.n + '   —   ' + (st === 'hold' ? 'ON HOLD' : st === 'reserved' ? 'RESERVED (' + u.cap + ' seats)' : u.used + ' of ' + u.cap + ' seats' + (u.open ? ' (' + u.open + ' open)' : ' (full)')) +
-      (t.res || t.note ? '   —   ' + (t.res || t.note) : '') + (t.zone ? '   —   Area: ' + t.zone : '');
+    h.value = 'TABLE ' + t.n + '   —   ' + (st === 'hold' ? 'ON HOLD' : st === 'reserved' ? 'RESERVED' + (t.res ? ' for ' + t.res : '') + ' (' + u.cap + ' chairs)' : u.used + ' of ' + u.cap + ' seats' + (u.open ? ' (' + u.open + ' open)' : ' (full)')) +
+      (t.note && st !== 'reserved' ? '   —   ' + t.note : '') + (t.res && st !== 'reserved' ? '   —   ' + t.res : '') + (t.zone ? '   —   Area: ' + t.zone : '');
     h.font = { bold: true, size: 13 }; h.fill = X.fill(fills[st]); h.border = X.thin;
     ws.getRow(r).height = 20;
     r++;
-    if (u.parties.length) {
+    if (u.parties.length || rs) {
       const hr = ws.getRow(r);
-      hr.values = ['Guest / group', 'Seats', 'Unit / org', 'Guest names', 'Requests & notes'];
+      hr.values = ['Guest / group', 'Seated guests', 'Reserved seats', 'Unit', 'Guest names', 'Requests & notes'];
       hr.font = { bold: true, size: 10, color: { argb: 'FF555555' } };
+      hr.alignment = { wrapText: true, vertical: 'bottom' };
       r++;
       u.parties.forEach(p => {
         const row = ws.getRow(r);
-        row.values = [BQ.displayName(p), p.seats, p.aff, (p.guests || []).join(', '), [X.needsText(p), p.notes].filter(Boolean).join(' | ')];
+        row.values = [BQ.displayName(p), Number(p.seats) || 0, null, p.aff, (p.guests || []).join(', '), [X.needsText(p), p.notes].filter(Boolean).join(' | ')];
+        seated += Number(p.seats) || 0;
         row.alignment = { wrapText: true, vertical: 'top' };
         row.getCell(2).alignment = { horizontal: 'center', vertical: 'top' };
         r++;
       });
+      if (rs) {
+        const row = ws.getRow(r);
+        row.values = ['🔒 Reserved: ' + (t.res || 'reserved block'), null, rs, '', '', 'Whole table held for this block; names not on the guest list'];
+        reserved += rs;
+        row.font = { italic: true, color: { argb: 'FF7A5A00' } };
+        row.getCell(3).alignment = { horizontal: 'center' };
+        for (let c = 1; c <= 6; c++) row.getCell(c).fill = X.fill('FFFFF6D8');
+        r++;
+      }
     }
     r++;
   });
+  // TOTALS at the top and bottom: live SUMs of the Seated guests (B) and Reserved seats (C) columns, so they can be checked
+  const last = r - 1;
+  const totals = (row) => {
+    const hd = ws.getRow(row), v = ws.getRow(row + 1);
+    hd.values = ['TOTALS', 'Seated guests', 'Reserved seats', 'All seats'];
+    v.values = ['Sums of column B and column C', { formula: 'SUM(B' + first + ':B' + last + ')', result: seated }, { formula: 'SUM(C' + first + ':C' + last + ')', result: reserved },
+      { formula: 'B' + (row + 1) + '+C' + (row + 1), result: seated + reserved }];
+    ws.mergeCells(row, 5, row + 1, 6);
+    ws.getCell(row, 5).value = 'Seated guests = everyone on the guest list with a table. Reserved seats = chairs held at reserved tables (e.g. sponsors) whose names aren’t on the list. All seats = both together.';
+    ws.getCell(row, 5).font = { italic: true, size: 9, color: { argb: 'FF555555' } };
+    ws.getCell(row, 5).alignment = { wrapText: true, vertical: 'middle' };
+    hd.font = { bold: true, size: 10, color: { argb: 'FF1F3A5F' } };
+    v.font = { bold: true, size: 14 };
+    v.getCell(1).font = { italic: true, size: 9, color: { argb: 'FF555555' } };
+    for (let c = 1; c <= 4; c++) {
+      hd.getCell(c).fill = X.fill('FFDCE6F2'); v.getCell(c).fill = X.fill(c === 3 ? 'FFFFF1C2' : c === 4 ? 'FFC6E7C1' : 'FFDCE6F2');
+      hd.getCell(c).border = { top: { style: 'medium' } }; v.getCell(c).border = { bottom: { style: 'medium' } };
+      if (c > 1) { hd.getCell(c).alignment = { horizontal: 'center', wrapText: true }; v.getCell(c).alignment = { horizontal: 'center' }; }
+    }
+    v.height = 22;
+  };
+  totals(3);
+  totals(r + 1);
   X.printSetup(ws, 'landscape');
 
   const sum = wb.addWorksheet('Summary', { views: [{ state: 'frozen', ySplit: 1 }] });
-  sum.columns = [{ width: 10 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 14 }, { width: 18 }, { width: 30 }, { width: 8 }];
-  X.header(sum, 1, ['Table', 'Chairs', 'Seated', 'Open', 'Status', 'Area', 'Reserved / note', 'Row']);
+  sum.columns = [{ width: 10 }, { width: 10 }, { width: 13 }, { width: 13 }, { width: 10 }, { width: 14 }, { width: 18 }, { width: 30 }, { width: 8 }];
+  X.header(sum, 1, ['Table', 'Chairs', 'Seated guests', 'Reserved seats', 'Open', 'Status', 'Area', 'Reserved / note', 'Row']);
   X.sortedTables().forEach((t, i) => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
-    sum.getRow(i + 2).values = [isNaN(Number(t.n)) ? t.n : Number(t.n), u.cap, u.used, u.open, { full: 'Full', open: 'Open seats', empty: 'Empty', hold: 'On hold', reserved: 'Reserved' }[st], t.zone || '', t.res || t.note || '', BQ.rowOf(t.n)];
+    sum.getRow(i + 2).values = [isNaN(Number(t.n)) ? t.n : Number(t.n), u.cap, u.used, BQ.reservedSeats(t) || null, st === 'hold' ? 0 : u.open, { full: 'Full', open: 'Open seats', empty: 'Empty', hold: 'On hold', reserved: 'Reserved' }[st], t.zone || '', t.res || t.note || '', BQ.rowOf(t.n)];
   });
-  sum.autoFilter = { from: 'A1', to: 'H1' };
+  const nT = X.sortedTables().length, tr = sum.getRow(nT + 2);
+  const col = k => X.sortedTables().reduce((n, t) => n + (k === 'open' && BQ.tableStatus(t) === 'hold' ? 0 : BQ.tableUse(t)[k]), 0);
+  const resAll = X.sortedTables().reduce((n, t) => n + BQ.reservedSeats(t), 0);
+  const f = (L, v) => ({ formula: 'SUM(' + L + '2:' + L + (nT + 1) + ')', result: v });
+  tr.values = ['TOTAL', f('B', col('cap')), f('C', col('used')), f('D', resAll), f('E', col('open'))];
+  tr.font = { bold: true };
+  for (let c = 1; c <= 9; c++) { tr.getCell(c).fill = X.fill('FFDCE6F2'); tr.getCell(c).border = { top: { style: 'medium' } }; }
+  sum.autoFilter = { from: 'A1', to: 'I1' };
   await X.save(wb, 'Table rosters');
 };
 
@@ -459,7 +503,7 @@ X.printVip = function () {
   const rows = X.vipRows();
   if (!rows.length) { BQ.ui.toast('Nobody is marked for the VIP reception yet.'); return; }
   X.print('<div class="pci">' + X.printHead('VIP Reception', rows.reduce((s, x) => s + x.n, 0) + ' people') + '<table><thead><tr><th>✓</th><th>Name</th><th>VIP tickets</th><th>Seats</th><th>Guests</th><th>Table</th></tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.displayName(x.p, true)) + '</td><td>' + BQ.esc(BQ.isOrg(x.p) ? x.p.name : (n => n.last + (n.first ? ', ' + n.first : ''))(BQ.splitName(x.p.name))) + '</td><td class="t">' + x.n + '</td><td class="c">' + x.p.seats + '</td><td>' + BQ.esc((x.p.guests || []).join(', ')) + '</td><td>' + BQ.esc(x.p.table || '') + '</td></tr>').join('') +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.displayName(x.p, true)) + '</td><td class="t">' + x.n + '</td><td class="c">' + x.p.seats + '</td><td>' + BQ.esc((x.p.guests || []).join(', ')) + '</td><td>' + BQ.esc(x.p.table || '') + '</td></tr>').join('') +
     '</tbody></table></div>', 'portrait', 'VIP reception list');
 };
 
@@ -637,7 +681,7 @@ X.staticMapSvg = function (opts) {
 
 X.printMap = function () {
   const s = BQ.stats();
-  const legend = '<div class="plegend">' + BQ.mapLegendHtml('status', true) + '<span class="lg"><b>' + s.seated + '</b>&nbsp;seated · <b>' + s.open + '</b>&nbsp;open seats</span></div>';
+  const legend = '<div class="plegend">' + BQ.mapLegendHtml('status', true) + '<span class="lg"><b>' + s.seated + '</b>&nbsp;seated guests' + (s.resSeats ? ' · <b>' + s.resSeats + '</b>&nbsp;reserved-table seats · <b>' + (s.seated + s.resSeats) + '</b>&nbsp;all seats' : '') + ' · <b>' + s.open + '</b>&nbsp;open seats</span></div>';
   X.print('<div class="pmap">' + X.printHead('Seating Map') + '<div class="pmap-svg">' + X.staticMapSvg({ look: t => BQ.tableLook(t, { colorBy: 'status', awardTables: BQ.awardTableSet() }) }) + '</div>' + legend + '</div>', 'landscape', 'map');
 };
 
@@ -681,17 +725,20 @@ X.printAlpha = function () {
 X.printRosters = function () {
   const cards = X.sortedTables().filter(t => BQ.tableStatus(t) !== 'empty').map(t => {
     const u = BQ.tableUse(t), st = BQ.tableStatus(t);
-    return '<div class="pr-card s-' + st + '"><div class="pr-h"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : st === 'reserved' ? 'Reserved' : u.used + '/' + u.cap) + '</span></div>' +
+    return '<div class="pr-card s-' + st + '"><div class="pr-h"><b>Table ' + BQ.esc(t.n) + '</b><span>' + (st === 'hold' ? 'On hold' : st === 'reserved' ? '🔒 Reserved · ' + BQ.reservedSeats(t) + ' seats' : u.used + '/' + u.cap) + '</span></div>' +
       (t.res || t.note ? '<div class="pr-res">' + BQ.esc(t.res || t.note) + '</div>' : '') +
       '<ul>' + u.parties.map(p => '<li><span>' + BQ.esc(BQ.displayName(p)) + ((p.guests || []).length ? '<small>' + BQ.esc(p.guests.join(', ')) + '</small>' : '') + '</span><b>' + p.seats + '</b></li>').join('') + '</ul></div>';
   }).join('');
-  X.print('<div class="prost">' + X.printHead('Table Rosters') + '<div class="pr-grid">' + cards + '</div></div>', 'portrait', 'rosters');
+  const seated = X.sortedTables().reduce((n, t) => n + BQ.tableUse(t).used, 0);
+  const reserved = X.sortedTables().reduce((n, t) => n + BQ.reservedSeats(t), 0);
+  const line = 'Seated guests: ' + seated + (reserved ? '   ·   Reserved-table seats: ' + reserved + '   ·   All seats: ' + (seated + reserved) : '');
+  X.print('<div class="prost">' + X.printHead('Table Rosters', line) + '<div class="pr-grid">' + cards + '</div><div class="pr-total"><b>' + line + '</b></div></div>', 'portrait', 'rosters');
 };
 
 X.printCheckin = function () {
   const rows = X.alphaRows();
   X.print('<div class="pci">' + X.printHead('Check-In List') + '<table><thead><tr><th>✓</th><th>Name</th><th>Table</th><th>Party</th><th>Seats</th><th>VIP tickets</th>' + (BQ.config.trackPayment ? '<th>Payment</th>' : '') + '</tr></thead><tbody>' +
-    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(BQ.displayName(x.p, true)) + '</td><td>' + BQ.esc(X.lf(x)) + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td><td class="c">' + (x.seats || '') + '</td><td class="c">' + (x.p.vip ? (x.leader ? '⭐ ' + BQ.vipCount(x.p) : '★') : '') + '</td>' +
+    rows.map(x => '<tr><td class="box">☐</td><td>' + BQ.esc(X.lf(x)) + '</td><td class="t">' + BQ.esc(x.table || '—') + '</td><td>' + BQ.esc(x.party) + '</td><td class="c">' + (x.seats || '') + '</td><td class="c">' + (x.p.vip ? (x.leader ? '⭐ ' + BQ.vipCount(x.p) : '★') : '') + '</td>' +
       (BQ.config.trackPayment ? '<td>' + (x.leader && x.p.pay && BQ.payClass(x.p.pay) !== 'ok' ? '<b>' + BQ.esc(x.p.pay) + '</b>' : '') + '</td>' : '') + '</tr>').join('') + '</tbody></table></div>', 'portrait', 'check-in');
 };
 
