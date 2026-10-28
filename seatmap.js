@@ -625,7 +625,7 @@ BQ.screens.seat = {
     // overview
     const s = BQ.stats();
     el.innerHTML = '<div class="sp-head"><h2>Room at a glance</h2><button class="x" id="spX" title="Close">✕</button></div>' +
-      '<div class="glance"><div><b>' + s.seated + '</b><span>seated</span></div><div><b>' + s.waiting + '</b><span>waiting</span></div>' +
+      '<div class="glance"><div><b>' + s.seated + '</b><span>seated guests</span></div>' + (s.resSeats ? '<div class="g-res"><b>' + s.resSeats + '</b><span>🔒 reserved-table seats</span></div><div><b>' + (s.seated + s.resSeats) + '</b><span>all seats</span></div>' : '') + '<div><b>' + s.waiting + '</b><span>waiting</span></div>' +
       '<div><b>' + s.open + '</b><span>open seats</span></div><div><b>' + s.full + '/' + (s.tables - s.hold) + '</b><span>tables full</span></div></div>' +
       '<div class="tips"><h3>How to seat people</h3><ol>' +
       '<li><b>Drag</b> a name from the left onto a table.</li>' +
