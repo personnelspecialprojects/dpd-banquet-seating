@@ -11,9 +11,13 @@ BQ.config = {
   appName: 'Banquet Seating',
   clientId: '0d384d2a-9a9e-46f6-a195-ad63f9e94f06',          // PatrolBidPortal registration
   tenantId: '2935709e-c10c-4809-a302-852d369f8700',
-  // Hardcoded on purpose (never window.location.href). Must match a redirect URI
-  // on the PatrolBidPortal app registration EXACTLY, including the trailing slash.
-  redirectUri: 'https://personnelspecialprojects.github.io/dpd-banquet-seating/',
+  // Every address this app is published at. Sign-in uses the entry that matches the page's folder
+  // address (never window.location.href itself). Each one must ALSO be added to the PatrolBidPortal
+  // registration → Authentication → Single-page application, spelled exactly, trailing slash included.
+  redirectUris: [
+    'https://personnelspecialprojects.github.io/dpd-banquet-seating/',
+    'https://dpd-banquet-seating.dpd-apps.workers.dev/'   // Cloudflare Workers (city computers block github.io)
+  ],
   siteUrl: 'https://dallastxgov.sharepoint.com/sites/AwardsBanquet',
   // Practice mode lets someone try the app with data saved only in their own browser.
   allowPractice: true,
@@ -34,13 +38,28 @@ BQ.auth = {
 
   available() { return typeof msal !== 'undefined' && !!msal.PublicClientApplication; },
 
+  // The page's folder address ("https://host/path/"), ignoring index.html, ?query and #hash
+  currentBase() { return (location.origin + location.pathname.replace(/[^/]*$/, '')).toLowerCase(); },
+  // The configured redirect URI for this address, or null if this address isn't set up for sign-in
+  redirectUri() {
+    const list = BQ.config.redirectUris || [BQ.config.redirectUri];
+    const here = this.currentBase();
+    return list.find(u => String(u || '').toLowerCase() === here) || null;
+  },
+  notSetUpMessage() {
+    return 'This address isn’t set up for sign-in yet: ' + this.currentBase() +
+      ' — add it to redirectUris in auth.js and to the PatrolBidPortal app registration (Authentication → Single-page application).';
+  },
+
   async init() {
     if (!this.available()) return false;
+    const redirectUri = this.redirectUri();
+    if (!redirectUri) throw new Error(this.notSetUpMessage());
     this.msal = new msal.PublicClientApplication({
       auth: {
         clientId: BQ.config.clientId,
         authority: 'https://login.microsoftonline.com/' + BQ.config.tenantId,
-        redirectUri: BQ.config.redirectUri
+        redirectUri
       },
       cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
     });
@@ -58,7 +77,7 @@ BQ.auth = {
 
   logout() {
     try { sessionStorage.removeItem('bq_mode'); } catch (e) { /* ignore */ }
-    return this.msal.logoutRedirect({ account: this.account, postLogoutRedirectUri: BQ.config.redirectUri });
+    return this.msal.logoutRedirect({ account: this.account, postLogoutRedirectUri: this.redirectUri() });
   },
 
   async token(scopes) {
