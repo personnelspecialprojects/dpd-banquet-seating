@@ -1148,7 +1148,8 @@ BQ.checkinUpdate = async function (pid, label, fn) {
 
 /* QR code + link for phones */
 BQ.checkinUrl = function () {
-  const base = BQ.state.store.kind === 'practice' ? location.href.split('?')[0].split('#')[0] : BQ.config.redirectUri;
+  // the address this page is being used at (Cloudflare Workers, GitHub Pages, …), so the QR works on the same host
+  const base = BQ.state.store.kind === 'practice' ? location.href.split('?')[0].split('#')[0] : (BQ.auth.redirectUri() || BQ.auth.currentBase());
   return base + '?mode=checkin' + (BQ.state.store.kind === 'practice' ? '#practice' : '');
 };
 BQ.checkinQrSvg = function () {
@@ -1404,11 +1405,11 @@ BQ.reload = async function () {
 /* ---------------------------------------------------------------------
    Startup
    --------------------------------------------------------------------- */
-BQ.loginScreen = function (msg) {
+BQ.loginScreen = function (msg, noSignIn) {
   document.getElementById('app').innerHTML = '<div class="login"><div class="login-card">' +
     '<div class="badge-logo big">★</div><h1>' + BQ.esc(BQ.config.appName) + '</h1><p class="muted">Awards banquet seating, awards lineup and check-in</p>' +
     (msg ? '<p class="bad">' + BQ.esc(msg) + '</p>' : '') +
-    (BQ.auth.available() ? '<button class="btn primary big block" id="lgIn">Sign in with your City account</button>' : '<p class="muted">Microsoft sign-in isn’t available on this page.</p>') +
+    (BQ.auth.available() && !noSignIn ? '<button class="btn primary big block" id="lgIn">Sign in with your City account</button>' : noSignIn ? '' : '<p class="muted">Microsoft sign-in isn’t available on this page.</p>') +
     (BQ.config.allowPractice ? '<button class="btn block" id="lgPractice">Try it in practice mode</button><p class="muted small">Practice mode saves only in this browser. Good for learning the app.</p>' : '') +
     '</div></div>';
   const i = document.getElementById('lgIn');
@@ -1467,6 +1468,7 @@ BQ.boot = async function () {
     if (signedIn) return BQ.start('sharepoint');
   } catch (e) {
     console.error(e);
+    if (!BQ.auth.redirectUri()) return BQ.loginScreen(BQ.auth.notSetUpMessage(), true);
     return BQ.loginScreen('Sign-in problem: ' + e.message);
   }
   BQ.loginScreen();
